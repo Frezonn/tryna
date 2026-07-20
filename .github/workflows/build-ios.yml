@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -27,6 +28,7 @@ jobs:
             -framework Foundation \
             -framework UIKit \
             -framework CoreGraphics \
+            -framework QuartzCore \
             -o libmylib.dylib \
             $SOURCES
       
@@ -35,3 +37,4 @@ jobs:
         with:
           name: ios-dylib
           path: "*.dylib"
+          
