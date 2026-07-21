@@ -20,20 +20,21 @@ jobs:
         # Create output directory
         mkdir -p build
         
-        # Compile Objective-C files to object files
+        # Compile WalletManager.m
         clang -fPIC -fobjc-arc \
           -framework UIKit \
           -framework Foundation \
           -framework WebKit \
           -c WalletManager.m -o build/WalletManager.o
         
+        # Compile Tweak.m
         clang -fPIC -fobjc-arc \
           -framework UIKit \
           -framework Foundation \
           -framework WebKit \
           -c Tweak.m -o build/Tweak.o
         
-        # Link into a dylib (dynamic library for iOS)
+        # Link into a dylib
         clang -fPIC -fobjc-arc \
           -framework UIKit \
           -framework Foundation \
