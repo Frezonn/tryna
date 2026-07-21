@@ -1,4 +1,4 @@
-name: Build Frezon Mod (dylib)
+name: Build Frezon Mod
 
 on:
   push:
@@ -22,24 +22,15 @@ jobs:
           
           if [ -f "Tweak.xm" ]; then
             cp Tweak.xm Tweak.m
-            sed -i '' 's/%ctor/__attribute__((constructor))/g' Tweak.m
             SOURCES="$SOURCES Tweak.m"
           fi
           
           if [ -z "$SOURCES" ]; then
-            echo "No source files found, creating test file"
-            cat > test.m << 'EOF'
-#import <Foundation/Foundation.h>
-
-__attribute__((constructor))
-static void initialize() {
-    NSLog(@"Frezon Mod loaded!");
-}
-EOF
-            SOURCES="test.m"
+            echo "No source files found"
+            exit 1
           fi
           
-          echo "Building files: $SOURCES"
+          echo "Building: $SOURCES"
           
           clang -dynamiclib \
             -target arm64-apple-ios13.0 \
@@ -51,13 +42,10 @@ EOF
             -framework WebKit \
             -o FrezonMod.dylib \
             $SOURCES
-          
-          echo "Build completed successfully!"
-          ls -la *.dylib
       
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: frezon-mod-dylib
+          name: frezon-mod
           path: "*.dylib"
           
