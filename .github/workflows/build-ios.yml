@@ -1,47 +1,42 @@
-name: Build FrezonMod Tweak
+Problem
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+The build is failing because the compiler cannot find the UIKit/UIKit.h header file. The issue is in your workflow configuration:
 
-jobs:
-  build:
-    runs-on: macos-latest
+Current problem: You're compiling for macOS using xcrun --sdk macosx, but your code (Tweak.m) uses UIKit, which is an iOS framework. UIKit doesn't exist on macOS.
+
+Solution
+
+Update your .github/workflows/build-ios.yml to target iOS instead of macOS. Replace the build step with:
+
+YAML
+- name: Build with clang
+  run: |
+    mkdir -p build
     
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    # Compile Tweak.m for iOS
+    clang -fPIC -fobjc-arc \
+      -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+      -arch arm64 \
+      -c Tweak.m -o build/Tweak.o
     
-    - name: Build with clang
-      run: |
-        mkdir -p build
-        
-        # Compile Tweak.m
-        clang -fPIC -fobjc-arc \
-          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
-          -c Tweak.m -o build/Tweak.o
-        
-        # Compile WalletManager.m
-        clang -fPIC -fobjc-arc \
-          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
-          -c WalletManager.m -o build/WalletManager.o
-        
-        # Link into a dylib
-        clang -fPIC -fobjc-arc \
-          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
-          -shared \
-          -o build/FrezonMod.dylib \
-          build/Tweak.o build/WalletManager.o
-        
-        echo "✓ Build successful!"
-        ls -lah build/
+    # Compile WalletManager.m for iOS
+    clang -fPIC -fobjc-arc \
+      -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+      -arch arm64 \
+      -c WalletManager.m -o build/WalletManager.o
     
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: FrezonMod-Build
-        path: build/
-        retention-days: 30
+    # Link into a dylib
+    clang -fPIC -fobjc-arc \
+      -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+      -arch arm64 \
+      -shared \
+      -o build/FrezonMod.dylib \
+      build/Tweak.o build/WalletManager.o
+    
+    echo "✓ Build successful!"
+    ls -lah build/
+Key changes:
+
+Changed --sdk macosx to --sdk iphoneos to target iOS SDK
+Added -arch arm64 to specify the ARM64 architecture for iOS devices
+This will properly resolve the UIKit headers and allow your iOS tweak to compile successfully.
