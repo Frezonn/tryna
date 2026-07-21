@@ -1,7 +1,9 @@
-name: Build Frezon Mod
+name: Build FrezonMod Tweak
 
 on:
   push:
+    branches: [ main ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
@@ -10,42 +12,45 @@ jobs:
     runs-on: macos-latest
     
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build dylib
-        run: |
-          SOURCES=""
-          
-          if [ -f "WalletManager.m" ]; then
-            SOURCES="$SOURCES WalletManager.m"
-          fi
-          
-          if [ -f "Tweak.xm" ]; then
-            cp Tweak.xm Tweak.m
-            SOURCES="$SOURCES Tweak.m"
-          fi
-          
-          if [ -z "$SOURCES" ]; then
-            echo "No source files found"
-            exit 1
-          fi
-          
-          echo "Building: $SOURCES"
-          
-          clang -dynamiclib \
-            -target arm64-apple-ios13.0 \
-            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-            -framework Foundation \
-            -framework UIKit \
-            -framework CoreGraphics \
-            -framework QuartzCore \
-            -framework WebKit \
-            -o FrezonMod.dylib \
-            $SOURCES
-      
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: frezon-mod
-          path: "*.dylib"
-          
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Install Theos dependencies
+      run: |
+        brew install dpkg
+        
+    - name: Setup Theos
+      run: |
+        git clone --recursive https://github.com/theos/theos.git $THEOS
+        echo "THEOS=$THEOS" >> $GITHUB_ENV
+      env:
+        THEOS: ${{ runner.temp }}/theos
+    
+    - name: Download iOS SDK
+      run: |
+        cd $THEOS
+        git clone https://github.com/theos/sdks.git sdks
+      env:
+        THEOS: ${{ runner.temp }}/theos
+    
+    - name: Build Tweak
+      run: |
+        export THEOS=${{ runner.temp }}/theos
+        export PATH=$THEOS/bin:$PATH
+        make clean
+        make package FINALPACKAGE=1
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: FrezonMod-Packages
+        path: packages/
+        retention-days: 30
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: packages/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
