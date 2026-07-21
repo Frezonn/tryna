@@ -56,7 +56,8 @@ static WKWebView *webView;
 }
 @end
 
-%ctor {
+__attribute__((constructor))
+static void customConstructor() {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
         if (!keyWindow) return;
