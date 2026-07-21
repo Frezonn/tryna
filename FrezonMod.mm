@@ -21,6 +21,8 @@ static const CGFloat kStartY = 100;
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) UILabel *versionLabel;
+@property (nonatomic, strong) id motorConfigInstance;
+@property (nonatomic, strong) NSMutableArray *fieldKeys;
 @end
 
 @implementation FrezonModOverlay
@@ -32,6 +34,8 @@ static const CGFloat kStartY = 100;
         self.layer.zPosition = CGFLOAT_MAX;
         self.userInteractionEnabled = YES;
         self.fieldsUI = [NSMutableDictionary dictionary];
+        self.fieldKeys = [NSMutableArray array];
+        self.isMenuVisible = NO;
         
         // ===== زر المنيو الدائري =====
         [self setupMenuButton];
@@ -44,6 +48,7 @@ static const CGFloat kStartY = 100;
             initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
         
+        // ===== بدء البحث عن الكلاس =====
         [self performSelector:@selector(initializeMod) withObject:nil afterDelay:2.0];
     }
     return self;
@@ -65,7 +70,6 @@ static const CGFloat kStartY = 100;
     _menuButton.layer.borderColor = [UIColor whiteColor].CGColor;
     _menuButton.layer.borderWidth = 1.5;
     
-    // حرف "F" كشعار
     _menuButton.titleLabel.font = [UIFont fontWithName:@"HelveticaNeue-Bold" size:24];
     [_menuButton setTitle:@"F" forState:UIControlStateNormal];
     [_menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -83,7 +87,7 @@ static const CGFloat kStartY = 100;
     _menuView.layer.borderWidth = 1;
     _menuView.hidden = YES;
     _menuView.clipsToBounds = YES;
-    _menuView.userInteractionEnabled = YES;
+    _menuView.userInteractionEnabled = YES; // ✅ مهم
     [self addSubview:_menuView];
     
     // ===== الهيدر =====
@@ -92,12 +96,10 @@ static const CGFloat kStartY = 100;
     headerView.userInteractionEnabled = NO;
     [_menuView addSubview:headerView];
     
-    // خط سفلي للهيدر
     UIView *headerLine = [[UIView alloc] initWithFrame:CGRectMake(0, 49, 280, 1)];
     headerLine.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
     [headerView addSubview:headerLine];
     
-    // عنوان "Frezon Mod"
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 200, 30)];
     titleLabel.text = @"Frezon Mod";
     titleLabel.font = [UIFont fontWithName:@"HelveticaNeue-Bold" size:18];
@@ -105,7 +107,6 @@ static const CGFloat kStartY = 100;
     titleLabel.textAlignment = NSTextAlignmentLeft;
     [headerView addSubview:titleLabel];
     
-    // إصدار v0.1
     _versionLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 28, 200, 16)];
     _versionLabel.text = @"v0.1";
     _versionLabel.font = [UIFont fontWithName:@"HelveticaNeue-Light" size:11];
@@ -113,7 +114,6 @@ static const CGFloat kStartY = 100;
     _versionLabel.textAlignment = NSTextAlignmentLeft;
     [headerView addSubview:_versionLabel];
     
-    // زر إغلاق (X)
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(240, 10, 30, 30);
     closeBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
@@ -126,12 +126,14 @@ static const CGFloat kStartY = 100;
     [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     [headerView addSubview:closeBtn];
     
-    // ===== ScrollView للمحتوى =====
+    // ===== ScrollView للمحتوى (مع تفعيل التمرير) =====
     _scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(5, 55, 270, 205)];
     _scrollView.backgroundColor = [UIColor clearColor];
     _scrollView.showsVerticalScrollIndicator = YES;
     _scrollView.alwaysBounceVertical = YES;
     _scrollView.userInteractionEnabled = YES;
+    _scrollView.scrollEnabled = YES;
+    _scrollView.bounces = YES;
     _scrollView.indicatorStyle = UIScrollViewIndicatorStyleWhite;
     [_menuView addSubview:_scrollView];
     
@@ -142,20 +144,216 @@ static const CGFloat kStartY = 100;
 }
 
 // ============================================================
-// ===== 3. إضافة حقول المود =====
+// ===== 3. البحث عن CharacterMotorConfig وعرض حقوله =====
 // ============================================================
 - (void)initializeMod {
-    [self addFieldToMenu:@"Jump Height" value:@"1.0" type:@"float"];
-    [self addFieldToMenu:@"Speed" value:@"10.0" type:@"float"];
-    [self addFieldToMenu:@"Gravity" value:@"-20.0" type:@"float"];
-    [self addFieldToMenu:@"Max Health" value:@"100" type:@"int"];
-    [self addFieldToMenu:@"Unlimited Coins" value:@"ON" type:@"toggle"];
-    [self addFieldToMenu:@"Unlimited Keys" value:@"ON" type:@"toggle"];
+    [self findCharacterMotorConfig];
+}
+
+- (void)findCharacterMotorConfig {
+    NSLog(@"🔍 Searching for CharacterMotorConfig...");
+    
+    // محاولة تحميل Unity Framework
+    void *unityHandle = dlopen("/System/Library/Frameworks/UnityFramework.framework/UnityFramework", RTLD_LAZY);
+    if (!unityHandle) {
+        unityHandle = dlopen("UnityFramework", RTLD_LAZY);
+    }
+    
+    if (unityHandle) {
+        NSLog(@"✅ Unity Framework loaded");
+    } else {
+        NSLog(@"⚠️ Unity Framework not found, using fallback");
+    }
+    
+    // البحث عن الكلاس باستخدام objc_getClass
+    Class motorConfigClass = objc_getClass("CharacterMotorConfig");
+    if (!motorConfigClass) {
+        // محاولة البحث عن الكلاس بالاسم الكامل
+        motorConfigClass = objc_getClass("SYBO.RunnerCore.Character.CharacterMotorConfig");
+    }
+    
+    if (motorConfigClass) {
+        NSLog(@"✅ Found CharacterMotorConfig class");
+        self.motorConfigInstance = [self findInstanceOfClass:motorConfigClass];
+        
+        if (self.motorConfigInstance) {
+            NSLog(@"✅ Found CharacterMotorConfig instance");
+            [self displayFieldsOfObject:self.motorConfigInstance];
+        } else {
+            NSLog(@"⚠️ No instance found, creating fallback fields");
+            [self addFallbackFields];
+        }
+    } else {
+        NSLog(@"❌ CharacterMotorConfig class not found");
+        [self addFallbackFields];
+    }
+}
+
+- (id)findInstanceOfClass:(Class)targetClass {
+    // ===== الطريقة 1: البحث عن الـ singleton =====
+    Ivar instanceIvar = class_getClassVariable(targetClass, "s_Instance");
+    if (instanceIvar) {
+        id instance = object_getIvar(targetClass, instanceIvar);
+        if (instance) {
+            NSLog(@"✅ Found via s_Instance");
+            return instance;
+        }
+    }
+    
+    // ===== الطريقة 2: البحث عن property "instance" =====
+    objc_property_t property = class_getProperty(targetClass, "instance");
+    if (property) {
+        id instance = [targetClass valueForKey:@"instance"];
+        if (instance) {
+            NSLog(@"✅ Found via instance property");
+            return instance;
+        }
+    }
+    
+    // ===== الطريقة 3: البحث عن property "sharedInstance" =====
+    property = class_getProperty(targetClass, "sharedInstance");
+    if (property) {
+        id instance = [targetClass valueForKey:@"sharedInstance"];
+        if (instance) {
+            NSLog(@"✅ Found via sharedInstance property");
+            return instance;
+        }
+    }
+    
+    // ===== الطريقة 4: البحث عن property "default" =====
+    property = class_getProperty(targetClass, "default");
+    if (property) {
+        id instance = [targetClass valueForKey:@"default"];
+        if (instance) {
+            NSLog(@"✅ Found via default property");
+            return instance;
+        }
+    }
+    
+    // ===== الطريقة 5: البحث عن static field "Default" =====
+    Ivar defaultIvar = class_getClassVariable(targetClass, "Default");
+    if (defaultIvar) {
+        id instance = object_getIvar(targetClass, defaultIvar);
+        if (instance) {
+            NSLog(@"✅ Found via Default ivar");
+            return instance;
+        }
+    }
+    
+    // ===== الطريقة 6: البحث في جميع الكائنات =====
+    int numClasses;
+    Class *classes = NULL;
+    numClasses = objc_getClassList(NULL, 0);
+    
+    if (numClasses > 0) {
+        classes = (Class *)malloc(sizeof(Class) * numClasses);
+        numClasses = objc_getClassList(classes, numClasses);
+        
+        for (int i = 0; i < numClasses; i++) {
+            Class cls = classes[i];
+            if (cls == targetClass) {
+                // محاولة الحصول على الكائن من static field
+                Ivar staticIvar = class_getClassVariable(cls, "instance");
+                if (staticIvar) {
+                    id instance = object_getIvar(cls, staticIvar);
+                    if (instance) {
+                        free(classes);
+                        return instance;
+                    }
+                }
+            }
+        }
+        free(classes);
+    }
+    
+    // ===== الطريقة 7: محاولة إنشاء كائن جديد =====
+    id newInstance = [[targetClass alloc] init];
+    if (newInstance) {
+        NSLog(@"✅ Created new instance");
+        return newInstance;
+    }
+    
+    return nil;
+}
+
+- (void)displayFieldsOfObject:(id)object {
+    Class cls = [object class];
+    unsigned int count;
+    Ivar *ivars = class_copyIvarList(cls, &count);
+    
+    NSLog(@"📌 Found %d fields in CharacterMotorConfig", count);
+    
+    for (unsigned int i = 0; i < count; i++) {
+        Ivar ivar = ivars[i];
+        const char *name = ivar_getName(ivar);
+        const char *type = ivar_getTypeEncoding(ivar);
+        
+        NSString *fieldName = [NSString stringWithUTF8String:name];
+        NSString *fieldType = [NSString stringWithUTF8String:type];
+        
+        // تجاهل الحقول الخاصة (ت starts with _)
+        if ([fieldName hasPrefix:@"_"]) {
+            continue;
+        }
+        
+        // جلب القيمة الحالية
+        id value = object_getIvar(object, ivar);
+        NSString *valueString = [NSString stringWithFormat:@"%@", value];
+        
+        // تحديد نوع الحقل
+        NSString *displayType = @"unknown";
+        if (strcmp(type, "f") == 0 || strcmp(type, "d") == 0) {
+            displayType = @"float";
+        } else if (strcmp(type, "i") == 0 || strcmp(type, "l") == 0 || strcmp(type, "q") == 0) {
+            displayType = @"int";
+        } else if (strcmp(type, "B") == 0 || strcmp(type, "c") == 0) {
+            displayType = @"bool";
+        } else if (strcmp(type, "@") == 0) {
+            displayType = @"object";
+        } else if (strcmp(type, "s") == 0) {
+            displayType = @"string";
+        }
+        
+        NSLog(@"📌 %@ = %@ (%@)", fieldName, valueString, displayType);
+        
+        // إضافة الحقل إلى المنيو
+        [self addFieldToMenu:fieldName value:valueString type:displayType ivar:ivar];
+        [self.fieldKeys addObject:fieldName];
+    }
+    
+    free(ivars);
+    
+    if (count == 0) {
+        [self addFallbackFields];
+    }
     
     [self updateContentSize];
 }
 
-- (void)addFieldToMenu:(NSString *)label value:(NSString *)defaultValue type:(NSString *)type {
+- (void)addFallbackFields {
+    // إذا لم نجد الكلاس، نضيف حقول افتراضية
+    NSArray *fallbackFields = @[
+        @[@"JumpHeight", @"20.000000", @"float"],
+        @[@"Gravity", @"-200.000000", @"float"],
+        @[@"Speed", @"110.000000", @"float"],
+        @[@"StickToGround", @"True", @"bool"],
+        @[@"ColliderHeight", @"9.000000", @"float"],
+        @[@"WallClimbEnabled", @"False", @"bool"],
+        @[@"RollDuration", @"0.600000", @"float"]
+    ];
+    
+    for (NSArray *field in fallbackFields) {
+        [self addFieldToMenu:field[0] value:field[1] type:field[2] ivar:nil];
+        [self.fieldKeys addObject:field[0]];
+    }
+    
+    [self updateContentSize];
+}
+
+// ============================================================
+// ===== 4. إضافة حقل إلى المنيو =====
+// ============================================================
+- (void)addFieldToMenu:(NSString *)label value:(NSString *)defaultValue type:(NSString *)type ivar:(Ivar)ivar {
     CGFloat yPos = self.contentView.subviews.count * 46;
     
     // ===== خلفية العنصر =====
@@ -168,23 +366,33 @@ static const CGFloat kStartY = 100;
     [self.contentView addSubview:itemView];
     
     // ===== اسم الحقل =====
-    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 100, 30)];
+    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 5, 100, 30)];
     nameLabel.text = label;
-    nameLabel.font = [UIFont fontWithName:@"HelveticaNeue" size:13];
+    nameLabel.font = [UIFont fontWithName:@"HelveticaNeue" size:12];
     nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
     nameLabel.userInteractionEnabled = NO;
+    nameLabel.adjustsFontSizeToFitWidth = YES;
+    nameLabel.minimumScaleFactor = 0.7;
     [itemView addSubview:nameLabel];
     
-    if ([type isEqualToString:@"toggle"]) {
+    if ([type isEqualToString:@"bool"]) {
         // ===== مفتاح تبديل (Toggle) =====
-        UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(190, 5, 50, 30)];
+        UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(195, 5, 50, 30)];
         toggle.onTintColor = [UIColor whiteColor];
         toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
         toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
-        toggle.on = [defaultValue isEqualToString:@"ON"];
-        toggle.tag = self.fieldsUI.count;
+        toggle.on = [defaultValue isEqualToString:@"1"] || [defaultValue isEqualToString:@"YES"] || [defaultValue isEqualToString:@"True"];
+        toggle.userInteractionEnabled = YES;
         [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
         [itemView addSubview:toggle];
+        
+        // تخزين البيانات
+        self.fieldsUI[label] = @{
+            @"type": type,
+            @"ivar": [NSValue valueWithPointer:ivar],
+            @"toggle": toggle,
+            @"itemView": itemView
+        };
     } else {
         // ===== حقل الإدخال =====
         UITextField *inputField = [[UITextField alloc] initWithFrame:CGRectMake(120, 5, 80, 30)];
@@ -194,11 +402,11 @@ static const CGFloat kStartY = 100;
         inputField.layer.cornerRadius = 5;
         inputField.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1].CGColor;
         inputField.layer.borderWidth = 0.5;
-        inputField.font = [UIFont fontWithName:@"HelveticaNeue" size:13];
+        inputField.font = [UIFont fontWithName:@"HelveticaNeue" size:12];
         inputField.keyboardType = UIKeyboardTypeDecimalPad;
         inputField.userInteractionEnabled = YES;
-        inputField.tag = 100;
         inputField.textAlignment = NSTextAlignmentCenter;
+        inputField.tag = 100;
         [itemView addSubview:inputField];
         
         // ===== زر التطبيق =====
@@ -214,24 +422,25 @@ static const CGFloat kStartY = 100;
         applyBtn.tag = 101;
         [applyBtn addTarget:self action:@selector(applyFieldValue:) forControlEvents:UIControlEventTouchUpInside];
         [itemView addSubview:applyBtn];
+        
+        // تخزين البيانات
+        self.fieldsUI[label] = @{
+            @"type": type,
+            @"ivar": [NSValue valueWithPointer:ivar],
+            @"inputField": inputField,
+            @"applyBtn": applyBtn,
+            @"itemView": itemView
+        };
     }
-    
-    // تخزين البيانات
-    NSDictionary *fieldData = @{
-        @"label": label,
-        @"type": type,
-        @"itemView": itemView
-    };
-    self.fieldsUI[label] = fieldData;
 }
 
-// ===== معالجة التبديل (Toggle) =====
+// ============================================================
+// ===== 5. معالجة التبديل (Toggle) =====
+// ============================================================
 - (void)toggleChanged:(UISwitch *)sender {
-    // البحث عن العنصر الأب
     UIView *itemView = sender.superview;
     if (!itemView) return;
     
-    // البحث عن الـ label
     UILabel *label = nil;
     for (UIView *subview in itemView.subviews) {
         if ([subview isKindOfClass:[UILabel class]]) {
@@ -242,11 +451,20 @@ static const CGFloat kStartY = 100;
     
     if (!label) return;
     
-    NSString *status = sender.isOn ? @"ON" : @"OFF";
-    NSLog(@"✅ Toggle: %@ = %@", label.text, status);
+    NSString *fieldName = label.text;
+    BOOL newValue = sender.isOn;
+    
+    NSLog(@"✅ Toggle: %@ = %@", fieldName, newValue ? @"YES" : @"NO");
+    
+    // تعديل القيمة في الكائن
+    [self setValue:newValue ? @"1" : @"0" forField:fieldName];
+    
+    [self showFeedback:[NSString stringWithFormat:@"%@ = %@", fieldName, newValue ? @"ON" : @"OFF"]];
 }
 
-// ===== معالجة زر التطبيق =====
+// ============================================================
+// ===== 6. معالجة زر التطبيق =====
+// ============================================================
 - (void)applyFieldValue:(UIButton *)sender {
     UIView *itemView = sender.superview;
     if (!itemView) return;
@@ -276,12 +494,113 @@ static const CGFloat kStartY = 100;
     
     NSLog(@"✅ Apply: %@ = %@", fieldName, newValue);
     
-    // رسالة تأكيد
-    [self showFeedback:[NSString stringWithFormat:@"%@ set to %@", fieldName, newValue]];
+    // تعديل القيمة في الكائن
+    BOOL success = [self setValue:newValue forField:fieldName];
+    
+    if (success) {
+        [self showFeedback:[NSString stringWithFormat:@"✅ %@ = %@", fieldName, newValue]];
+    } else {
+        [self showFeedback:[NSString stringWithFormat:@"❌ Failed to set %@", fieldName]];
+    }
+}
+
+// ============================================================
+// ===== 7. دالة تعديل القيمة فعلياً =====
+// ============================================================
+- (BOOL)setValue:(NSString *)newValue forField:(NSString *)fieldName {
+    if (!self.motorConfigInstance) {
+        NSLog(@"❌ No motor config instance");
+        return NO;
+    }
+    
+    // البحث عن الـ Ivar
+    Ivar ivar = class_getInstanceVariable([self.motorConfigInstance class], [fieldName UTF8String]);
+    if (!ivar) {
+        // محاولة البحث بالاسم بدون تغيير
+        NSString *searchName = fieldName;
+        ivar = class_getInstanceVariable([self.motorConfigInstance class], [searchName UTF8String]);
+    }
+    
+    if (!ivar) {
+        NSLog(@"❌ Field '%@' not found", fieldName);
+        return NO;
+    }
+    
+    const char *type = ivar_getTypeEncoding(ivar);
+    NSLog(@"📌 Setting %@ to %@ (type: %s)", fieldName, newValue, type);
+    
+    @try {
+        if (strcmp(type, "f") == 0) {
+            float floatValue = [newValue floatValue];
+            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithFloat:floatValue]);
+        } else if (strcmp(type, "d") == 0) {
+            double doubleValue = [newValue doubleValue];
+            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithDouble:doubleValue]);
+        } else if (strcmp(type, "i") == 0 || strcmp(type, "l") == 0 || strcmp(type, "q") == 0) {
+            int intValue = [newValue intValue];
+            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithInt:intValue]);
+        } else if (strcmp(type, "B") == 0 || strcmp(type, "c") == 0) {
+            BOOL boolValue = [newValue boolValue] || [newValue isEqualToString:@"1"] || [newValue isEqualToString:@"YES"] || [newValue isEqualToString:@"True"];
+            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithBool:boolValue]);
+        } else if (strcmp(type, "@") == 0) {
+            // كائن (Object)
+            object_setIvar(self.motorConfigInstance, ivar, newValue);
+        } else if (strcmp(type, "s") == 0) {
+            // سلسلة نصية (String)
+            object_setIvar(self.motorConfigInstance, ivar, newValue);
+        } else {
+            NSLog(@"⚠️ Unsupported type: %s", type);
+            return NO;
+        }
+        
+        NSLog(@"✅ Successfully set %@ = %@", fieldName, newValue);
+        return YES;
+    } @catch (NSException *exception) {
+        NSLog(@"❌ Exception: %@", exception);
+        return NO;
+    }
+}
+
+// ============================================================
+// ===== 8. دوال التحكم في المينو =====
+// ============================================================
+- (void)toggleMenu {
+    _isMenuVisible = !_isMenuVisible;
+    _menuView.hidden = !_isMenuVisible;
+    if (_isMenuVisible) {
+        [self.superview bringSubviewToFront:self];
+        // إعادة تحميل القيم عند فتح المينو
+        [self refreshValues];
+    }
+}
+
+- (void)refreshValues {
+    // تحديث القيم المعروضة في المينو
+    for (NSString *key in self.fieldsUI.allKeys) {
+        NSDictionary *data = self.fieldsUI[key];
+        if (!data) continue;
+        
+        // البحث عن القيمة الحالية
+        Ivar ivar = [[data objectForKey:@"ivar"] pointerValue];
+        if (ivar && self.motorConfigInstance) {
+            id value = object_getIvar(self.motorConfigInstance, ivar);
+            NSString *valueString = [NSString stringWithFormat:@"%@", value];
+            
+            UITextField *inputField = [data objectForKey:@"inputField"];
+            if (inputField) {
+                inputField.text = valueString;
+            }
+            
+            UISwitch *toggle = [data objectForKey:@"toggle"];
+            if (toggle) {
+                toggle.on = [valueString isEqualToString:@"1"] || [valueString isEqualToString:@"YES"] || [valueString isEqualToString:@"True"];
+            }
+        }
+    }
 }
 
 - (void)showFeedback:(NSString *)message {
-    // رسالة داخل المينو
+    // إزالة أي رسالة سابقة
     for (UIView *view in self.menuView.subviews) {
         if ([view isKindOfClass:[UILabel class]] && view.tag == 999) {
             [view removeFromSuperview];
@@ -294,6 +613,7 @@ static const CGFloat kStartY = 100;
     feedbackLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1];
     feedbackLabel.textAlignment = NSTextAlignmentCenter;
     feedbackLabel.tag = 999;
+    feedbackLabel.userInteractionEnabled = NO;
     [_menuView addSubview:feedbackLabel];
     
     [self performSelector:@selector(clearFeedback) withObject:nil afterDelay:2.5];
@@ -309,21 +629,11 @@ static const CGFloat kStartY = 100;
 
 - (void)updateContentSize {
     CGFloat totalHeight = self.contentView.subviews.count * 46 + 10;
+    if (totalHeight < 200) totalHeight = 200;
     CGRect frame = self.contentView.frame;
     frame.size.height = totalHeight;
     self.contentView.frame = frame;
     self.scrollView.contentSize = CGSizeMake(260, totalHeight);
-}
-
-// ============================================================
-// ===== 4. دوال التحكم في المينو =====
-// ============================================================
-- (void)toggleMenu {
-    _isMenuVisible = !_isMenuVisible;
-    _menuView.hidden = !_isMenuVisible;
-    if (_isMenuVisible) {
-        [self.superview bringSubviewToFront:self];
-    }
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)gr {
@@ -335,7 +645,7 @@ static const CGFloat kStartY = 100;
 @end
 
 // ============================================================
-// ===== 5. دوال الحقن (Injection) =====
+// ===== 9. دوال الحقن (Injection) =====
 // ============================================================
 static FrezonModOverlay *overlay;
 
