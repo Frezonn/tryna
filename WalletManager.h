@@ -4,5 +4,6 @@
 
 + (BOOL)modifyWalletWithUnlimited:(BOOL)enable;
 + (NSString *)findWalletFile;
++ (void)restoreWallet;
 
 @end
