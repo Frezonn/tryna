@@ -9,49 +9,39 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
     
-    - name: Setup Theos
+    - name: Build with clang
       run: |
-        git clone --recursive https://github.com/theos/theos.git ~/theos
-        echo "THEOS=~/theos" >> $GITHUB_ENV
-    
-    - name: Install build tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential fakeroot devscripts clang llvm
-    
-    - name: Create Makefile
-      run: |
-        cat > Makefile << 'EOF'
-        ARCHS = arm64
-        TARGET = iphone:clang:14.4:13.0
+        mkdir -p build
         
-        include $(THEOS)/makefiles/common.mk
+        # Compile Tweak.m
+        clang -fPIC -fobjc-arc \
+          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
+          -c Tweak.m -o build/Tweak.o
         
-        TWEAK_NAME = FrezonMod
-        FrezonMod_FILES = Tweak.m WalletManager.m
-        FrezonMod_FRAMEWORKS = UIKit Foundation WebKit
-        FrezonMod_CFLAGS = -fobjc-arc
+        # Compile WalletManager.m
+        clang -fPIC -fobjc-arc \
+          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
+          -c WalletManager.m -o build/WalletManager.o
         
-        include $(THEOS)/makefiles/tweak.mk
-        EOF
+        # Link into a dylib
+        clang -fPIC -fobjc-arc \
+          -isysroot $(xcrun --sdk macosx --show-sdk-path) \
+          -shared \
+          -o build/FrezonMod.dylib \
+          build/Tweak.o build/WalletManager.o
+        
+        echo "✓ Build successful!"
+        ls -lah build/
     
-    - name: Build Tweak
-      run: |
-        export THEOS=~/theos
-        make package FINALPACKAGE=1
-    
-    - name: List build output
-      run: ls -lah packages/
-    
-    - name: Upload artifacts
+    - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: FrezonMod-Deb
-        path: packages/
+        name: FrezonMod-Build
+        path: build/
         retention-days: 30
