@@ -15,43 +15,40 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
     
-    - name: Install Theos dependencies
+    - name: Compile with clang
       run: |
-        brew install dpkg
+        # Create output directory
+        mkdir -p build
         
-    - name: Setup Theos
-      run: |
-        git clone --recursive https://github.com/theos/theos.git $THEOS
-        echo "THEOS=$THEOS" >> $GITHUB_ENV
-      env:
-        THEOS: ${{ runner.temp }}/theos
-    
-    - name: Download iOS SDK
-      run: |
-        cd $THEOS
-        git clone https://github.com/theos/sdks.git sdks
-      env:
-        THEOS: ${{ runner.temp }}/theos
-    
-    - name: Build Tweak
-      run: |
-        export THEOS=${{ runner.temp }}/theos
-        export PATH=$THEOS/bin:$PATH
-        make clean
-        make package FINALPACKAGE=1
+        # Compile Objective-C files to object files
+        clang -fPIC -fobjc-arc \
+          -framework UIKit \
+          -framework Foundation \
+          -framework WebKit \
+          -c WalletManager.m -o build/WalletManager.o
+        
+        clang -fPIC -fobjc-arc \
+          -framework UIKit \
+          -framework Foundation \
+          -framework WebKit \
+          -c Tweak.m -o build/Tweak.o
+        
+        # Link into a dylib (dynamic library for iOS)
+        clang -fPIC -fobjc-arc \
+          -framework UIKit \
+          -framework Foundation \
+          -framework WebKit \
+          -shared \
+          -o build/FrezonMod.dylib \
+          build/WalletManager.o \
+          build/Tweak.o
+        
+        echo "✓ Build successful!"
+        ls -lah build/
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
-    
       with:
-        name: FrezonMod-Packages
-        path: packages/
+        name: FrezonMod-Build
+        path: build/
         retention-days: 30
-    
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: packages/*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
