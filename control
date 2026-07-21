@@ -1,0 +1,9 @@
+Package: com.frezon.frezonmod
+Name: Frezon Mod
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Mod menu for Subway Surfers
+Maintainer: Frezon
+Author: Frezon
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
