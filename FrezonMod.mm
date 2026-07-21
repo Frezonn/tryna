@@ -87,7 +87,7 @@ static const CGFloat kStartY = 100;
     _menuView.layer.borderWidth = 1;
     _menuView.hidden = YES;
     _menuView.clipsToBounds = YES;
-    _menuView.userInteractionEnabled = YES; // ✅ مهم
+    _menuView.userInteractionEnabled = YES;
     [self addSubview:_menuView];
     
     // ===== الهيدر =====
@@ -291,7 +291,7 @@ static const CGFloat kStartY = 100;
         NSString *fieldName = [NSString stringWithUTF8String:name];
         NSString *fieldType = [NSString stringWithUTF8String:type];
         
-        // تجاهل الحقول الخاصة (ت starts with _)
+        // تجاهل الحقول الخاصة (تبدأ ب _)
         if ([fieldName hasPrefix:@"_"]) {
             continue;
         }
@@ -580,8 +580,8 @@ static const CGFloat kStartY = 100;
         NSDictionary *data = self.fieldsUI[key];
         if (!data) continue;
         
-        // البحث عن القيمة الحالية
-        Ivar ivar = [[data objectForKey:@"ivar"] pointerValue];
+        // ===== ✅ التصحيح هنا: إضافة (Ivar) cast =====
+        Ivar ivar = (Ivar)[[data objectForKey:@"ivar"] pointerValue];
         if (ivar && self.motorConfigInstance) {
             id value = object_getIvar(self.motorConfigInstance, ivar);
             NSString *valueString = [NSString stringWithFormat:@"%@", value];
