@@ -1,4 +1,4 @@
-name: Build iOS Dylib
+name: Build Frezon Mod
 
 on:
   push:
@@ -12,28 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Build iOS Dylib
+      - name: Install Theos
         run: |
-          # ابحث عن جميع ملفات .m و .mm
-          SOURCES=$(find . -name "*.m" -o -name "*.mm" | tr '\n' ' ')
-          
-          if [ -z "$SOURCES" ]; then
-            echo "⚠️ لا توجد ملفات .m أو .mm"
-            exit 1
-          fi
-          
-          clang -dynamiclib \
-            -target arm64-apple-ios13.0 \
-            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
-            -framework Foundation \
-            -framework UIKit \
-            -framework CoreGraphics \
-            -framework QuartzCore \
-            -o libmylib.dylib \
-            $SOURCES
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+      
+      - name: Build Tweak
+        run: |
+          export THEOS=$HOME/theos
+          make package
       
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-dylib
-          path: "*.dylib"
+          name: frezon-mod
+          path: packages/*.deb
+          
