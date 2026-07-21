@@ -14,25 +14,20 @@ jobs:
       
       - name: Build dylib
         run: |
-          # تجميع جميع ملفات المصدر
           SOURCES=""
           
-          # أضف ملفات المصدر (بدون Tweak.xm لأنه يحتوي على %ctor)
           if [ -f "WalletManager.m" ]; then
             SOURCES="$SOURCES WalletManager.m"
           fi
           
           if [ -f "Tweak.xm" ]; then
-            # حول Tweak.xm إلى Tweak.m (بحذف سطور %ctor مؤقتاً)
             cp Tweak.xm Tweak.m
-            # استبدل %ctor بدالة عادية
             sed -i '' 's/%ctor/__attribute__((constructor))/g' Tweak.m
             SOURCES="$SOURCES Tweak.m"
           fi
           
-          # إذا لم توجد ملفات مصدر، استخدم ملف اختبار
           if [ -z "$SOURCES" ]; then
-            echo "⚠️ لا توجد ملفات مصدر، أنشئ ملف اختبار"
+            echo "No source files found, creating test file"
             cat > test.m << 'EOF'
 #import <Foundation/Foundation.h>
 
@@ -44,9 +39,8 @@ EOF
             SOURCES="test.m"
           fi
           
-          echo "📄 الملفات المبنية: $SOURCES"
+          echo "Building files: $SOURCES"
           
-          # بناء dylib
           clang -dynamiclib \
             -target arm64-apple-ios13.0 \
             -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
@@ -58,7 +52,7 @@ EOF
             -o FrezonMod.dylib \
             $SOURCES
           
-          echo "✅ تم البناء بنجاح!"
+          echo "Build completed successfully!"
           ls -la *.dylib
       
       - name: Upload Artifact
@@ -66,3 +60,4 @@ EOF
         with:
           name: frezon-mod-dylib
           path: "*.dylib"
+          
