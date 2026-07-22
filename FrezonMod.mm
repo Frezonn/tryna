@@ -2,686 +2,764 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#import <mach/mach.h>
 
 // ============================================================
-// ===== 1. إعدادات المود =====
+// ===== 1. تحميل UnityFramework =====
 // ============================================================
-static NSString *const kModVersion = @"Frezon Mod v0.1";
-static const CGFloat kStartX = 20;
-static const CGFloat kStartY = 100;
+static void *unityFrameworkHandle = NULL;
+
+void loadUnityFramework() {
+    const char *paths[] = {
+        "Subwaysurf.app/Frameworks/UnityFramework.framework/UnityFramework",
+        "Frameworks/UnityFramework.framework/UnityFramework",
+        "/System/Library/Frameworks/UnityFramework.framework/UnityFramework",
+        "UnityFramework"
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        unityFrameworkHandle = dlopen(paths[i], RTLD_LAZY);
+        if (unityFrameworkHandle) {
+            NSLog(@"UnityFramework loaded from: %s", paths[i]);
+            return;
+        }
+    }
+    
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    NSString *frameworkPath = [bundlePath stringByAppendingPathComponent:@"Frameworks/UnityFramework.framework/UnityFramework"];
+    unityFrameworkHandle = dlopen([frameworkPath UTF8String], RTLD_LAZY);
+    
+    if (unityFrameworkHandle) {
+        NSLog(@"UnityFramework loaded from bundle path: %@", frameworkPath);
+    } else {
+        NSLog(@"Failed to load UnityFramework");
+    }
+}
 
 // ============================================================
-// ===== 2. واجهة المود منيو (أسود وأبيض) =====
+// ===== 2. IL2CPP دوال البحث =====
 // ============================================================
-@interface FrezonModOverlay : UIView
-@property (nonatomic, strong) UIButton *menuButton;
-@property (nonatomic, strong) UIView *menuView;
-@property (nonatomic, strong) NSMutableDictionary *fieldsUI;
-@property (nonatomic, assign) BOOL isMenuVisible;
-@property (nonatomic, strong) UIScrollView *scrollView;
-@property (nonatomic, strong) UIView *contentView;
-@property (nonatomic, strong) UILabel *versionLabel;
-@property (nonatomic, strong) id motorConfigInstance;
-@property (nonatomic, strong) NSMutableArray *fieldKeys;
+typedef void *(*il2cpp_class_from_name_t)(void *image, const char *namespaze, const char *name);
+typedef void *(*il2cpp_assembly_get_image_t)(void *assembly);
+typedef void *(*il2cpp_domain_get_assemblies_t)(void *domain, size_t *size);
+
+static il2cpp_class_from_name_t il2cpp_class_from_name = NULL;
+static il2cpp_assembly_get_image_t il2cpp_assembly_get_image = NULL;
+static il2cpp_domain_get_assemblies_t il2cpp_domain_get_assemblies = NULL;
+
+void init_il2cpp_functions() {
+    if (!unityFrameworkHandle) return;
+    
+    il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(unityFrameworkHandle, "il2cpp_class_from_name");
+    il2cpp_assembly_get_image = (il2cpp_assembly_get_image_t)dlsym(unityFrameworkHandle, "il2cpp_assembly_get_image");
+    il2cpp_domain_get_assemblies = (il2cpp_domain_get_assemblies_t)dlsym(unityFrameworkHandle, "il2cpp_domain_get_assemblies");
+}
+
+void *find_class_in_il2cpp(const char *namespaze, const char *name) {
+    if (!il2cpp_class_from_name) return NULL;
+    
+    size_t assembly_count = 0;
+    void **assemblies = il2cpp_domain_get_assemblies(NULL, &assembly_count);
+    
+    for (size_t i = 0; i < assembly_count; i++) {
+        void *image = il2cpp_assembly_get_image(assemblies[i]);
+        void *klass = il2cpp_class_from_name(image, namespaze, name);
+        if (klass) return klass;
+    }
+    return NULL;
+}
+
+// ============================================================
+// ===== 3. Offsets من Assembly-CSharp =====
+// ============================================================
+#define OFFSET_GRAVITY                      0x18
+#define OFFSET_STICK_TO_GROUND              0x1C
+#define OFFSET_SKIP_HOLES                   0x20
+#define OFFSET_INITIAL_TARGET_SPEED         0x24
+#define OFFSET_FINAL_TARGET_SPEED           0x28
+#define OFFSET_SPEED_ACCELERATION_DURATION  0x2C
+#define OFFSET_LANE_CHANGE_DURATION         0x30
+#define OFFSET_JUMP_ON_GROUNDED_LANE_CHANGE 0x40
+#define OFFSET_MIN_TRAVEL_BEFORE_LANE_CHANGE 0x44
+#define OFFSET_ALLOW_LANE_CHANGE_TOWARDS_BOUNDARIES 0x48
+#define OFFSET_JUMP_HEIGHT                  0x4C
+#define OFFSET_AIR_JUMP_HEIGHT              0x50
+#define OFFSET_GROUNDED_TIME_EXTENSION      0x54
+#define OFFSET_JUMP_DIVE_VELOCITY_Y         0x58
+#define OFFSET_ROLL_DURATION                0x5C
+#define OFFSET_END_ROLL_AUTOMATICALLY       0x60
+#define OFFSET_COLLIDER_HEIGHT              0x64
+#define OFFSET_LOWER_IMPACT_MAX_HEIGHT      0x68
+#define OFFSET_UPPER_IMPACT_MIN_HEIGHT      0x6C
+#define OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION 0x70
+#define OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE 0x74
+#define OFFSET_FRONTAL_IMPACT_TIMEOUT       0x78
+#define OFFSET_LOWER_IMPACT_HEIGHT_RATIO    0x7C
+#define OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN 0x80
+#define OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX 0x84
+#define OFFSET_CORNER_IMPACT_REGION_WIDTH   0x88
+#define OFFSET_SURFACE_MAX_UPWARDS_SPEED    0x8C
+#define OFFSET_WALL_CLIMB_ENABLED           0x90
+#define OFFSET_MAX_WALL_CLIMB_DISTANCE      0x94
+#define OFFSET_WALL_CLIMB_FINISH_JUMP_HEIGHT 0x98
+#define OFFSET_WALL_CLIMB_FINISH_JUMP_SPEED 0x9C
+#define OFFSET_WALL_CLIMB_ACCELERATION      0xA0
+#define OFFSET_WALL_CLIMB_TARGET_SPEED      0xA4
+#define OFFSET_WALL_CLIMB_MAX_ZENITH_ANGLE  0xA8
+#define OFFSET_SPEED_BOOST_MAX_SPEED        0xAC
+#define OFFSET_SPEED_BOOST_DEACCELERATION_DELAY 0xB0
+
+// RouteConfig Offsets
+#define OFFSET_ROUTE_SEED                   0x20
+#define OFFSET_ROUTE_FORCE_SEED             0x24
+
+// ============================================================
+// ===== 4. هيكل التخزين للقيم =====
+// ============================================================
+typedef struct {
+    float jumpHeight;
+    float airJumpHeight;
+    float speed;
+    float gravity;
+    float rollDuration;
+    float wallClimbSpeed;
+    float diveVelocity;
+    float surfaceMaxUpwardsSpeed;
+    float speedBoostMax;
+    bool godmode;
+    bool noCoinPickup;
+    bool wallClimbEnabled;
+    bool stickToGround;
+    int routeSeed;
+    bool seedOverride;
+} ModSettings;
+
+static ModSettings g_settings = {
+    .jumpHeight = 50.0f,
+    .airJumpHeight = 50.0f,
+    .speed = 200.0f,
+    .gravity = -50.0f,
+    .rollDuration = 0.1f,
+    .wallClimbSpeed = 50.0f,
+    .diveVelocity = -200.0f,
+    .surfaceMaxUpwardsSpeed = 200.0f,
+    .speedBoostMax = 300.0f,
+    .godmode = true,
+    .noCoinPickup = true,
+    .wallClimbEnabled = true,
+    .stickToGround = true,
+    .routeSeed = 12345,
+    .seedOverride = true
+};
+
+// ============================================================
+// ===== 5. دوال تعديل الذاكرة =====
+// ============================================================
+uintptr_t g_configAddress = 0;
+uintptr_t g_routeConfigAddress = 0;
+
+void find_motor_config_address() {
+    if (g_configAddress != 0) return;
+    
+    mach_port_t task = mach_task_self();
+    float targetValue = 20.0f;
+    vm_address_t startAddress = 0x100000000;
+    vm_size_t searchSize = 0x20000000;
+    
+    for (vm_address_t addr = startAddress; addr < startAddress + searchSize; addr += 4) {
+        float value = 0;
+        vm_read_overwrite(task, addr, sizeof(float), (vm_address_t)&value, NULL);
+        if (value == targetValue) {
+            float gravity = 0;
+            vm_read_overwrite(task, addr - OFFSET_JUMP_HEIGHT + OFFSET_GRAVITY, sizeof(float), (vm_address_t)&gravity, NULL);
+            if (gravity == -200.0f || gravity == -150.0f) {
+                g_configAddress = addr - OFFSET_JUMP_HEIGHT;
+                NSLog(@"MotorConfig found at: 0x%llx", g_configAddress);
+                return;
+            }
+        }
+    }
+}
+
+void find_route_config_address() {
+    if (g_routeConfigAddress != 0) return;
+    
+    Class routeConfigClass = objc_getClass("SYBO.Subway.RouteConfig");
+    if (routeConfigClass) {
+        Ivar seedIvar = class_getInstanceVariable(routeConfigClass, "_forceSeed");
+        if (seedIvar) {
+            id instance = [routeConfigClass performSelector:@selector(instance)];
+            if (instance) {
+                g_routeConfigAddress = (uintptr_t)instance;
+                NSLog(@"RouteConfig found at: 0x%llx", g_routeConfigAddress);
+                return;
+            }
+        }
+    }
+}
+
+void apply_modifications() {
+    mach_port_t task = mach_task_self();
+    find_motor_config_address();
+    find_route_config_address();
+    
+    if (g_configAddress == 0) {
+        NSLog(@"MotorConfig not found");
+        return;
+    }
+    
+    // ===== القسم 1: Godmode (تعطيل التصادمات) =====
+    if (g_settings.godmode) {
+        float zero = 0.0f;
+        float huge = 1000.0f;
+        float tiny = 0.01f;
+        
+        uintptr_t knockbackDur = g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION;
+        uintptr_t knockbackDist = g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE;
+        vm_protect(task, (vm_address_t)knockbackDur, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        vm_protect(task, (vm_address_t)knockbackDist, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)knockbackDur = zero;
+        *(float *)knockbackDist = zero;
+        
+        uintptr_t lowerMax = g_configAddress + OFFSET_LOWER_IMPACT_MAX_HEIGHT;
+        uintptr_t upperMin = g_configAddress + OFFSET_UPPER_IMPACT_MIN_HEIGHT;
+        vm_protect(task, (vm_address_t)lowerMax, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        vm_protect(task, (vm_address_t)upperMin, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)lowerMax = huge;
+        *(float *)upperMin = -huge;
+        
+        uintptr_t frontalTimeout = g_configAddress + OFFSET_FRONTAL_IMPACT_TIMEOUT;
+        vm_protect(task, (vm_address_t)frontalTimeout, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)frontalTimeout = zero;
+        
+        uintptr_t colliderHeight = g_configAddress + OFFSET_COLLIDER_HEIGHT;
+        vm_protect(task, (vm_address_t)colliderHeight, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)colliderHeight = tiny;
+        
+        uintptr_t lowerRatio = g_configAddress + OFFSET_LOWER_IMPACT_HEIGHT_RATIO;
+        vm_protect(task, (vm_address_t)lowerRatio, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)lowerRatio = zero;
+        
+        uintptr_t cornerMin = g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN;
+        uintptr_t cornerMax = g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX;
+        uintptr_t cornerWidth = g_configAddress + OFFSET_CORNER_IMPACT_REGION_WIDTH;
+        vm_protect(task, (vm_address_t)cornerMin, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        vm_protect(task, (vm_address_t)cornerMax, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        vm_protect(task, (vm_address_t)cornerWidth, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)cornerMin = zero;
+        *(float *)cornerMax = zero;
+        *(float *)cornerWidth = zero;
+        
+        NSLog(@"Godmode activated");
+    }
+    
+    // ===== القسم 2: تعديل القفز =====
+    uintptr_t jumpAddr = g_configAddress + OFFSET_JUMP_HEIGHT;
+    uintptr_t airJumpAddr = g_configAddress + OFFSET_AIR_JUMP_HEIGHT;
+    vm_protect(task, (vm_address_t)jumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    vm_protect(task, (vm_address_t)airJumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)jumpAddr = g_settings.jumpHeight;
+    *(float *)airJumpAddr = g_settings.airJumpHeight;
+    NSLog(@"Jump Height: %.2f", g_settings.jumpHeight);
+    
+    // ===== القسم 3: تعديل السرعة =====
+    uintptr_t initSpeed = g_configAddress + OFFSET_INITIAL_TARGET_SPEED;
+    uintptr_t finalSpeed = g_configAddress + OFFSET_FINAL_TARGET_SPEED;
+    vm_protect(task, (vm_address_t)initSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    vm_protect(task, (vm_address_t)finalSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)initSpeed = g_settings.speed;
+    *(float *)finalSpeed = g_settings.speed;
+    NSLog(@"Speed: %.2f", g_settings.speed);
+    
+    // ===== القسم 4: تعديل الجاذبية =====
+    uintptr_t gravityAddr = g_configAddress + OFFSET_GRAVITY;
+    vm_protect(task, (vm_address_t)gravityAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)gravityAddr = g_settings.gravity;
+    NSLog(@"Gravity: %.2f", g_settings.gravity);
+    
+    // ===== القسم 5: تعديل الـ Roll =====
+    uintptr_t rollAddr = g_configAddress + OFFSET_ROLL_DURATION;
+    vm_protect(task, (vm_address_t)rollAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)rollAddr = g_settings.rollDuration;
+    NSLog(@"Roll Duration: %.2f", g_settings.rollDuration);
+    
+    // ===== القسم 6: تعديل الـ Wall Climb =====
+    uintptr_t wallClimbAddr = g_configAddress + OFFSET_WALL_CLIMB_ENABLED;
+    vm_protect(task, (vm_address_t)wallClimbAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(bool *)wallClimbAddr = g_settings.wallClimbEnabled;
+    
+    uintptr_t wallSpeedAddr = g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED;
+    vm_protect(task, (vm_address_t)wallSpeedAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)wallSpeedAddr = g_settings.wallClimbSpeed;
+    NSLog(@"Wall Climb: %d, Speed: %.2f", g_settings.wallClimbEnabled, g_settings.wallClimbSpeed);
+    
+    // ===== القسم 7: الالتصاق بالأرض =====
+    uintptr_t stickAddr = g_configAddress + OFFSET_STICK_TO_GROUND;
+    vm_protect(task, (vm_address_t)stickAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(bool *)stickAddr = g_settings.stickToGround;
+    NSLog(@"Stick to Ground: %d", g_settings.stickToGround);
+    
+    // ===== القسم 8: تعديل الـ Dive =====
+    uintptr_t diveAddr = g_configAddress + OFFSET_JUMP_DIVE_VELOCITY_Y;
+    vm_protect(task, (vm_address_t)diveAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)diveAddr = g_settings.diveVelocity;
+    NSLog(@"Dive Velocity: %.2f", g_settings.diveVelocity);
+    
+    // ===== القسم 9: Surface Max Upwards Speed =====
+    uintptr_t surfaceAddr = g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED;
+    vm_protect(task, (vm_address_t)surfaceAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)surfaceAddr = g_settings.surfaceMaxUpwardsSpeed;
+    NSLog(@"Surface Max Upwards Speed: %.2f", g_settings.surfaceMaxUpwardsSpeed);
+    
+    // ===== القسم 10: Speed Boost =====
+    uintptr_t boostAddr = g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED;
+    vm_protect(task, (vm_address_t)boostAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)boostAddr = g_settings.speedBoostMax;
+    NSLog(@"Speed Boost Max: %.2f", g_settings.speedBoostMax);
+    
+    // ===== القسم 11: Route Seed (Override) =====
+    if (g_routeConfigAddress != 0 && g_settings.seedOverride) {
+        uintptr_t seedAddr = g_routeConfigAddress + OFFSET_ROUTE_SEED;
+        uintptr_t forceSeedAddr = g_routeConfigAddress + OFFSET_ROUTE_FORCE_SEED;
+        vm_protect(task, (vm_address_t)seedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
+        vm_protect(task, (vm_address_t)forceSeedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(int *)seedAddr = g_settings.routeSeed;
+        *(int *)forceSeedAddr = 1;
+        NSLog(@"Route Seed: %d", g_settings.routeSeed);
+    }
+}
+
+// ============================================================
+// ===== 6. واجهة المستخدم (مود منيو مقسم) =====
+// ============================================================
+static UIWindow *menuWindow;
+static BOOL isMenuVisible = NO;
+static UIScrollView *scrollView;
+static UIView *contentView;
+static NSMutableDictionary *inputFields;
+
+@interface FrezonModViewController : UIViewController
 @end
 
-@implementation FrezonModOverlay
+@implementation FrezonModViewController
 
-- (instancetype)init {
-    self = [super initWithFrame:CGRectMake(kStartX, kStartY, 60, 60)];
-    if (self) {
-        self.backgroundColor = [UIColor clearColor];
-        self.layer.zPosition = CGFLOAT_MAX;
-        self.userInteractionEnabled = YES;
-        self.fieldsUI = [NSMutableDictionary dictionary];
-        self.fieldKeys = [NSMutableArray array];
-        self.isMenuVisible = NO;
-        
-        // ===== زر المنيو الدائري =====
-        [self setupMenuButton];
-        
-        // ===== نافذة المنيو =====
-        [self setupMenuView];
-        
-        // ===== سحب الحر =====
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-            initWithTarget:self action:@selector(handlePan:)];
-        [self addGestureRecognizer:pan];
-        
-        // ===== بدء البحث عن الكلاس =====
-        [self performSelector:@selector(initializeMod) withObject:nil afterDelay:2.0];
-    }
-    return self;
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor clearColor];
 }
 
-- (void)setupMenuButton {
-    _menuButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _menuButton.frame = CGRectMake(0, 0, 60, 60);
-    _menuButton.layer.cornerRadius = 30;
-    _menuButton.clipsToBounds = YES;
-    _menuButton.layer.shadowColor = [UIColor blackColor].CGColor;
-    _menuButton.layer.shadowOffset = CGSizeMake(0, 4);
-    _menuButton.layer.shadowRadius = 8;
-    _menuButton.layer.shadowOpacity = 0.5;
-    _menuButton.userInteractionEnabled = YES;
-    
-    // تصميم الزر (أسود وأبيض)
-    _menuButton.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1.0];
-    _menuButton.layer.borderColor = [UIColor whiteColor].CGColor;
-    _menuButton.layer.borderWidth = 1.5;
-    
-    _menuButton.titleLabel.font = [UIFont fontWithName:@"HelveticaNeue-Bold" size:24];
-    [_menuButton setTitle:@"F" forState:UIControlStateNormal];
-    [_menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    
-    [_menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:_menuButton];
-}
+@end
 
-- (void)setupMenuView {
-    // ===== نافذة المنيو الرئيسية =====
-    _menuView = [[UIView alloc] initWithFrame:CGRectMake(-20, -320, 280, 300)];
-    _menuView.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.97];
-    _menuView.layer.cornerRadius = 16;
-    _menuView.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1].CGColor;
-    _menuView.layer.borderWidth = 1;
-    _menuView.hidden = YES;
-    _menuView.clipsToBounds = YES;
-    _menuView.userInteractionEnabled = YES;
-    [self addSubview:_menuView];
+void createMenuUI() {
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    if (!window) return;
+    
+    menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 60, 340, 520)];
+    menuWindow.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.97];
+    menuWindow.layer.cornerRadius = 16;
+    menuWindow.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1].CGColor;
+    menuWindow.layer.borderWidth = 0.5;
+    menuWindow.hidden = YES;
+    menuWindow.windowLevel = UIWindowLevelAlert + 1;
+    menuWindow.userInteractionEnabled = YES;
+    
+    FrezonModViewController *vc = [[FrezonModViewController alloc] init];
+    menuWindow.rootViewController = vc;
     
     // ===== الهيدر =====
-    UIView *headerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 280, 50)];
-    headerView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
-    headerView.userInteractionEnabled = NO;
-    [_menuView addSubview:headerView];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 50)];
+    header.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
+    [menuWindow addSubview:header];
     
-    UIView *headerLine = [[UIView alloc] initWithFrame:CGRectMake(0, 49, 280, 1)];
-    headerLine.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
-    [headerView addSubview:headerLine];
-    
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 200, 30)];
-    titleLabel.text = @"Frezon Mod";
-    titleLabel.font = [UIFont fontWithName:@"HelveticaNeue-Bold" size:18];
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentLeft;
-    [headerView addSubview:titleLabel];
-    
-    _versionLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 28, 200, 16)];
-    _versionLabel.text = @"v0.1";
-    _versionLabel.font = [UIFont fontWithName:@"HelveticaNeue-Light" size:11];
-    _versionLabel.textColor = [UIColor colorWithWhite:0.5 alpha:1];
-    _versionLabel.textAlignment = NSTextAlignmentLeft;
-    [headerView addSubview:_versionLabel];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 30)];
+    title.text = @"Frezon Mod v0.1";
+    title.font = [UIFont boldSystemFontOfSize:18];
+    title.textColor = [UIColor whiteColor];
+    [header addSubview:title];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(240, 10, 30, 30);
-    closeBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-    closeBtn.layer.cornerRadius = 15;
-    closeBtn.clipsToBounds = YES;
-    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor colorWithWhite:0.7 alpha:1] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    closeBtn.userInteractionEnabled = YES;
-    [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
-    [headerView addSubview:closeBtn];
+    closeBtn.frame = CGRectMake(300, 10, 30, 30);
+    [closeBtn setTitle:@"X" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
+    [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
+    [header addSubview:closeBtn];
     
-    // ===== ScrollView للمحتوى (مع تفعيل التمرير) =====
-    _scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(5, 55, 270, 205)];
-    _scrollView.backgroundColor = [UIColor clearColor];
-    _scrollView.showsVerticalScrollIndicator = YES;
-    _scrollView.alwaysBounceVertical = YES;
-    _scrollView.userInteractionEnabled = YES;
-    _scrollView.scrollEnabled = YES;
-    _scrollView.bounces = YES;
-    _scrollView.indicatorStyle = UIScrollViewIndicatorStyleWhite;
-    [_menuView addSubview:_scrollView];
+    // ===== ScrollView =====
+    scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 50, 340, 470)];
+    scrollView.backgroundColor = [UIColor clearColor];
+    scrollView.showsVerticalScrollIndicator = YES;
+    scrollView.userInteractionEnabled = YES;
+    scrollView.scrollEnabled = YES;
+    scrollView.bounces = YES;
+    [menuWindow addSubview:scrollView];
     
-    _contentView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 260, 10)];
-    _contentView.backgroundColor = [UIColor clearColor];
-    _contentView.userInteractionEnabled = YES;
-    [_scrollView addSubview:_contentView];
+    contentView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 10)];
+    contentView.backgroundColor = [UIColor clearColor];
+    contentView.userInteractionEnabled = YES;
+    [scrollView addSubview:contentView];
+    
+    inputFields = [NSMutableDictionary dictionary];
+    
+    CGFloat yOffset = 10;
+    
+    // ============================================================
+    // ===== القسم 1: Godmode =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Godmode");
+    yOffset = addToggleWithLabel(contentView, yOffset, @"Godmode", g_settings.godmode, @"godmode_toggle");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ============================================================
+    // ===== القسم 2: Player Physics =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Player Physics");
+    yOffset = addFloatField(contentView, yOffset, @"Jump Height", g_settings.jumpHeight, @"jump_height");
+    yOffset = addFloatField(contentView, yOffset, @"Air Jump Height", g_settings.airJumpHeight, @"air_jump");
+    yOffset = addFloatField(contentView, yOffset, @"Speed", g_settings.speed, @"speed");
+    yOffset = addFloatField(contentView, yOffset, @"Gravity", g_settings.gravity, @"gravity");
+    yOffset = addFloatField(contentView, yOffset, @"Roll Duration", g_settings.rollDuration, @"roll_duration");
+    yOffset = addFloatField(contentView, yOffset, @"Dive Velocity", g_settings.diveVelocity, @"dive_velocity");
+    yOffset = addFloatField(contentView, yOffset, @"Surface Max Upwards Speed", g_settings.surfaceMaxUpwardsSpeed, @"surface_speed");
+    yOffset = addToggleWithLabel(contentView, yOffset, @"Stick to Ground", g_settings.stickToGround, @"stick_toggle");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ============================================================
+    // ===== القسم 3: Wall Climb =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Wall Climb");
+    yOffset = addToggleWithLabel(contentView, yOffset, @"Wall Climb Enabled", g_settings.wallClimbEnabled, @"wall_toggle");
+    yOffset = addFloatField(contentView, yOffset, @"Wall Climb Speed", g_settings.wallClimbSpeed, @"wall_speed");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ============================================================
+    // ===== القسم 4: Speed Boost =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Speed Boost");
+    yOffset = addFloatField(contentView, yOffset, @"Speed Boost Max", g_settings.speedBoostMax, @"boost_max");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ============================================================
+    // ===== القسم 5: Route Seed =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Route Seed Override");
+    yOffset = addToggleWithLabel(contentView, yOffset, @"Seed Override", g_settings.seedOverride, @"seed_toggle");
+    yOffset = addIntField(contentView, yOffset, @"Route Seed", g_settings.routeSeed, @"route_seed");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ============================================================
+    // ===== القسم 6: Coin Pickup =====
+    // ============================================================
+    yOffset = addSectionHeader(contentView, yOffset, @"Coin Pickup");
+    yOffset = addToggleWithLabel(contentView, yOffset, @"No Coin Pickup", g_settings.noCoinPickup, @"coin_toggle");
+    yOffset = addSeparator(contentView, yOffset);
+    
+    // ===== زر تطبيق الكل =====
+    UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    applyBtn.frame = CGRectMake(20, yOffset + 10, 300, 44);
+    applyBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+    applyBtn.layer.cornerRadius = 10;
+    [applyBtn setTitle:@"Apply All Settings" forState:UIControlStateNormal];
+    [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    applyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [applyBtn addTarget:self action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
+    [contentView addSubview:applyBtn];
+    yOffset += 60;
+    
+    // تحديث حجم المحتوى
+    CGRect frame = contentView.frame;
+    frame.size.height = yOffset + 20;
+    contentView.frame = frame;
+    scrollView.contentSize = CGSizeMake(340, frame.size.height);
+    
+    [menuWindow makeKeyAndVisible];
 }
 
-// ============================================================
-// ===== 3. البحث عن CharacterMotorConfig وعرض حقوله =====
-// ============================================================
-- (void)initializeMod {
-    [self findCharacterMotorConfig];
+// ===== دوال مساعدة لبناء UI =====
+CGFloat addSectionHeader(UIView *parent, CGFloat y, NSString *title) {
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, y, 300, 30)];
+    label.text = title;
+    label.font = [UIFont boldSystemFontOfSize:16];
+    label.textColor = [UIColor colorWithWhite:0.7 alpha:1];
+    label.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
+    label.layer.cornerRadius = 4;
+    label.clipsToBounds = YES;
+    label.textAlignment = NSTextAlignmentCenter;
+    [parent addSubview:label];
+    return y + 35;
 }
 
-- (void)findCharacterMotorConfig {
-    NSLog(@"🔍 Searching for CharacterMotorConfig...");
-    
-    // محاولة تحميل Unity Framework
-    void *unityHandle = dlopen("/System/Library/Frameworks/UnityFramework.framework/UnityFramework", RTLD_LAZY);
-    if (!unityHandle) {
-        unityHandle = dlopen("UnityFramework", RTLD_LAZY);
-    }
-    
-    if (unityHandle) {
-        NSLog(@"✅ Unity Framework loaded");
-    } else {
-        NSLog(@"⚠️ Unity Framework not found, using fallback");
-    }
-    
-    // البحث عن الكلاس باستخدام objc_getClass
-    Class motorConfigClass = objc_getClass("CharacterMotorConfig");
-    if (!motorConfigClass) {
-        // محاولة البحث عن الكلاس بالاسم الكامل
-        motorConfigClass = objc_getClass("SYBO.RunnerCore.Character.CharacterMotorConfig");
-    }
-    
-    if (motorConfigClass) {
-        NSLog(@"✅ Found CharacterMotorConfig class");
-        self.motorConfigInstance = [self findInstanceOfClass:motorConfigClass];
-        
-        if (self.motorConfigInstance) {
-            NSLog(@"✅ Found CharacterMotorConfig instance");
-            [self displayFieldsOfObject:self.motorConfigInstance];
-        } else {
-            NSLog(@"⚠️ No instance found, creating fallback fields");
-            [self addFallbackFields];
-        }
-    } else {
-        NSLog(@"❌ CharacterMotorConfig class not found");
-        [self addFallbackFields];
-    }
+CGFloat addSeparator(UIView *parent, CGFloat y) {
+    UIView *line = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 1)];
+    line.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+    [parent addSubview:line];
+    return y + 10;
 }
 
-- (id)findInstanceOfClass:(Class)targetClass {
-    // ===== الطريقة 1: البحث عن الـ singleton =====
-    Ivar instanceIvar = class_getClassVariable(targetClass, "s_Instance");
-    if (instanceIvar) {
-        id instance = object_getIvar(targetClass, instanceIvar);
-        if (instance) {
-            NSLog(@"✅ Found via s_Instance");
-            return instance;
-        }
-    }
+CGFloat addFloatField(UIView *parent, CGFloat y, NSString *label, float value, NSString *key) {
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
+    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
+    container.layer.cornerRadius = 6;
+    [parent addSubview:container];
     
-    // ===== الطريقة 2: البحث عن property "instance" =====
-    objc_property_t property = class_getProperty(targetClass, "instance");
-    if (property) {
-        id instance = [targetClass valueForKey:@"instance"];
-        if (instance) {
-            NSLog(@"✅ Found via instance property");
-            return instance;
-        }
-    }
-    
-    // ===== الطريقة 3: البحث عن property "sharedInstance" =====
-    property = class_getProperty(targetClass, "sharedInstance");
-    if (property) {
-        id instance = [targetClass valueForKey:@"sharedInstance"];
-        if (instance) {
-            NSLog(@"✅ Found via sharedInstance property");
-            return instance;
-        }
-    }
-    
-    // ===== الطريقة 4: البحث عن property "default" =====
-    property = class_getProperty(targetClass, "default");
-    if (property) {
-        id instance = [targetClass valueForKey:@"default"];
-        if (instance) {
-            NSLog(@"✅ Found via default property");
-            return instance;
-        }
-    }
-    
-    // ===== الطريقة 5: البحث عن static field "Default" =====
-    Ivar defaultIvar = class_getClassVariable(targetClass, "Default");
-    if (defaultIvar) {
-        id instance = object_getIvar(targetClass, defaultIvar);
-        if (instance) {
-            NSLog(@"✅ Found via Default ivar");
-            return instance;
-        }
-    }
-    
-    // ===== الطريقة 6: البحث في جميع الكائنات =====
-    int numClasses;
-    Class *classes = NULL;
-    numClasses = objc_getClassList(NULL, 0);
-    
-    if (numClasses > 0) {
-        classes = (Class *)malloc(sizeof(Class) * numClasses);
-        numClasses = objc_getClassList(classes, numClasses);
-        
-        for (int i = 0; i < numClasses; i++) {
-            Class cls = classes[i];
-            if (cls == targetClass) {
-                // محاولة الحصول على الكائن من static field
-                Ivar staticIvar = class_getClassVariable(cls, "instance");
-                if (staticIvar) {
-                    id instance = object_getIvar(cls, staticIvar);
-                    if (instance) {
-                        free(classes);
-                        return instance;
-                    }
-                }
-            }
-        }
-        free(classes);
-    }
-    
-    // ===== الطريقة 7: محاولة إنشاء كائن جديد =====
-    id newInstance = [[targetClass alloc] init];
-    if (newInstance) {
-        NSLog(@"✅ Created new instance");
-        return newInstance;
-    }
-    
-    return nil;
-}
-
-- (void)displayFieldsOfObject:(id)object {
-    Class cls = [object class];
-    unsigned int count;
-    Ivar *ivars = class_copyIvarList(cls, &count);
-    
-    NSLog(@"📌 Found %d fields in CharacterMotorConfig", count);
-    
-    for (unsigned int i = 0; i < count; i++) {
-        Ivar ivar = ivars[i];
-        const char *name = ivar_getName(ivar);
-        const char *type = ivar_getTypeEncoding(ivar);
-        
-        NSString *fieldName = [NSString stringWithUTF8String:name];
-        NSString *fieldType = [NSString stringWithUTF8String:type];
-        
-        // تجاهل الحقول الخاصة (تبدأ ب _)
-        if ([fieldName hasPrefix:@"_"]) {
-            continue;
-        }
-        
-        // جلب القيمة الحالية
-        id value = object_getIvar(object, ivar);
-        NSString *valueString = [NSString stringWithFormat:@"%@", value];
-        
-        // تحديد نوع الحقل
-        NSString *displayType = @"unknown";
-        if (strcmp(type, "f") == 0 || strcmp(type, "d") == 0) {
-            displayType = @"float";
-        } else if (strcmp(type, "i") == 0 || strcmp(type, "l") == 0 || strcmp(type, "q") == 0) {
-            displayType = @"int";
-        } else if (strcmp(type, "B") == 0 || strcmp(type, "c") == 0) {
-            displayType = @"bool";
-        } else if (strcmp(type, "@") == 0) {
-            displayType = @"object";
-        } else if (strcmp(type, "s") == 0) {
-            displayType = @"string";
-        }
-        
-        NSLog(@"📌 %@ = %@ (%@)", fieldName, valueString, displayType);
-        
-        // إضافة الحقل إلى المنيو
-        [self addFieldToMenu:fieldName value:valueString type:displayType ivar:ivar];
-        [self.fieldKeys addObject:fieldName];
-    }
-    
-    free(ivars);
-    
-    if (count == 0) {
-        [self addFallbackFields];
-    }
-    
-    [self updateContentSize];
-}
-
-- (void)addFallbackFields {
-    // إذا لم نجد الكلاس، نضيف حقول افتراضية
-    NSArray *fallbackFields = @[
-        @[@"JumpHeight", @"20.000000", @"float"],
-        @[@"Gravity", @"-200.000000", @"float"],
-        @[@"Speed", @"110.000000", @"float"],
-        @[@"StickToGround", @"True", @"bool"],
-        @[@"ColliderHeight", @"9.000000", @"float"],
-        @[@"WallClimbEnabled", @"False", @"bool"],
-        @[@"RollDuration", @"0.600000", @"float"]
-    ];
-    
-    for (NSArray *field in fallbackFields) {
-        [self addFieldToMenu:field[0] value:field[1] type:field[2] ivar:nil];
-        [self.fieldKeys addObject:field[0]];
-    }
-    
-    [self updateContentSize];
-}
-
-// ============================================================
-// ===== 4. إضافة حقل إلى المنيو =====
-// ============================================================
-- (void)addFieldToMenu:(NSString *)label value:(NSString *)defaultValue type:(NSString *)type ivar:(Ivar)ivar {
-    CGFloat yPos = self.contentView.subviews.count * 46;
-    
-    // ===== خلفية العنصر =====
-    UIView *itemView = [[UIView alloc] initWithFrame:CGRectMake(5, yPos, 250, 40)];
-    itemView.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.9];
-    itemView.layer.cornerRadius = 8;
-    itemView.layer.borderColor = [UIColor colorWithWhite:0.2 alpha:1].CGColor;
-    itemView.layer.borderWidth = 0.5;
-    itemView.userInteractionEnabled = YES;
-    [self.contentView addSubview:itemView];
-    
-    // ===== اسم الحقل =====
-    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(8, 5, 100, 30)];
+    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 140, 30)];
     nameLabel.text = label;
-    nameLabel.font = [UIFont fontWithName:@"HelveticaNeue" size:12];
+    nameLabel.font = [UIFont systemFontOfSize:13];
     nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
-    nameLabel.userInteractionEnabled = NO;
-    nameLabel.adjustsFontSizeToFitWidth = YES;
-    nameLabel.minimumScaleFactor = 0.7;
-    [itemView addSubview:nameLabel];
+    [container addSubview:nameLabel];
     
-    if ([type isEqualToString:@"bool"]) {
-        // ===== مفتاح تبديل (Toggle) =====
-        UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(195, 5, 50, 30)];
-        toggle.onTintColor = [UIColor whiteColor];
-        toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
-        toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
-        toggle.on = [defaultValue isEqualToString:@"1"] || [defaultValue isEqualToString:@"YES"] || [defaultValue isEqualToString:@"True"];
-        toggle.userInteractionEnabled = YES;
-        [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
-        [itemView addSubview:toggle];
-        
-        // تخزين البيانات
-        self.fieldsUI[label] = @{
-            @"type": type,
-            @"ivar": [NSValue valueWithPointer:ivar],
-            @"toggle": toggle,
-            @"itemView": itemView
-        };
-    } else {
-        // ===== حقل الإدخال =====
-        UITextField *inputField = [[UITextField alloc] initWithFrame:CGRectMake(120, 5, 80, 30)];
-        inputField.text = defaultValue;
-        inputField.textColor = [UIColor whiteColor];
-        inputField.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-        inputField.layer.cornerRadius = 5;
-        inputField.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1].CGColor;
-        inputField.layer.borderWidth = 0.5;
-        inputField.font = [UIFont fontWithName:@"HelveticaNeue" size:12];
-        inputField.keyboardType = UIKeyboardTypeDecimalPad;
-        inputField.userInteractionEnabled = YES;
-        inputField.textAlignment = NSTextAlignmentCenter;
-        inputField.tag = 100;
-        [itemView addSubview:inputField];
-        
-        // ===== زر التطبيق =====
-        UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        applyBtn.frame = CGRectMake(205, 5, 40, 30);
-        applyBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-        applyBtn.layer.cornerRadius = 5;
-        applyBtn.clipsToBounds = YES;
-        [applyBtn setTitle:@"Set" forState:UIControlStateNormal];
-        [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        applyBtn.titleLabel.font = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11];
-        applyBtn.userInteractionEnabled = YES;
-        applyBtn.tag = 101;
-        [applyBtn addTarget:self action:@selector(applyFieldValue:) forControlEvents:UIControlEventTouchUpInside];
-        [itemView addSubview:applyBtn];
-        
-        // تخزين البيانات
-        self.fieldsUI[label] = @{
-            @"type": type,
-            @"ivar": [NSValue valueWithPointer:ivar],
-            @"inputField": inputField,
-            @"applyBtn": applyBtn,
-            @"itemView": itemView
-        };
+    UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(155, 5, 100, 30)];
+    field.text = [NSString stringWithFormat:@"%.2f", value];
+    field.textColor = [UIColor whiteColor];
+    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
+    field.layer.cornerRadius = 4;
+    field.font = [UIFont systemFontOfSize:13];
+    field.keyboardType = UIKeyboardTypeDecimalPad;
+    field.textAlignment = NSTextAlignmentCenter;
+    field.tag = 100;
+    [container addSubview:field];
+    
+    UIButton *setBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    setBtn.frame = CGRectMake(260, 5, 50, 30);
+    setBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
+    setBtn.layer.cornerRadius = 4;
+    [setBtn setTitle:@"Set" forState:UIControlStateNormal];
+    [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [setBtn addTarget:self action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
+    [container addSubview:setBtn];
+    
+    inputFields[key] = @{@"field": field, @"container": container};
+    return y + 45;
+}
+
+CGFloat addIntField(UIView *parent, CGFloat y, NSString *label, int value, NSString *key) {
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
+    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
+    container.layer.cornerRadius = 6;
+    [parent addSubview:container];
+    
+    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 140, 30)];
+    nameLabel.text = label;
+    nameLabel.font = [UIFont systemFontOfSize:13];
+    nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
+    [container addSubview:nameLabel];
+    
+    UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(155, 5, 100, 30)];
+    field.text = [NSString stringWithFormat:@"%d", value];
+    field.textColor = [UIColor whiteColor];
+    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
+    field.layer.cornerRadius = 4;
+    field.font = [UIFont systemFontOfSize:13];
+    field.keyboardType = UIKeyboardTypeNumberPad;
+    field.textAlignment = NSTextAlignmentCenter;
+    field.tag = 101;
+    [container addSubview:field];
+    
+    UIButton *setBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    setBtn.frame = CGRectMake(260, 5, 50, 30);
+    setBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
+    setBtn.layer.cornerRadius = 4;
+    [setBtn setTitle:@"Set" forState:UIControlStateNormal];
+    [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+    [setBtn addTarget:self action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
+    [container addSubview:setBtn];
+    
+    inputFields[key] = @{@"field": field, @"container": container};
+    return y + 45;
+}
+
+CGFloat addToggleWithLabel(UIView *parent, CGFloat y, NSString *label, BOOL value, NSString *key) {
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
+    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
+    container.layer.cornerRadius = 6;
+    [parent addSubview:container];
+    
+    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 220, 30)];
+    nameLabel.text = label;
+    nameLabel.font = [UIFont systemFontOfSize:13];
+    nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
+    [container addSubview:nameLabel];
+    
+    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(250, 5, 50, 30)];
+    toggle.on = value;
+    toggle.onTintColor = [UIColor whiteColor];
+    toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
+    toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
+    toggle.tag = 200;
+    [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
+    [container addSubview:toggle];
+    
+    inputFields[key] = @{@"toggle": toggle, @"container": container};
+    return y + 45;
+}
+
+// ===== دوال الأزرار =====
+void toggleMenu() {
+    if (!menuWindow) {
+        createMenuUI();
+    }
+    isMenuVisible = !isMenuVisible;
+    menuWindow.hidden = !isMenuVisible;
+    if (!menuWindow.hidden) {
+        [menuWindow makeKeyAndVisible];
     }
 }
 
-// ============================================================
-// ===== 5. معالجة التبديل (Toggle) =====
-// ============================================================
-- (void)toggleChanged:(UISwitch *)sender {
-    UIView *itemView = sender.superview;
-    if (!itemView) return;
-    
-    UILabel *label = nil;
-    for (UIView *subview in itemView.subviews) {
-        if ([subview isKindOfClass:[UILabel class]]) {
-            label = (UILabel *)subview;
-            break;
-        }
-    }
-    
-    if (!label) return;
-    
-    NSString *fieldName = label.text;
-    BOOL newValue = sender.isOn;
-    
-    NSLog(@"✅ Toggle: %@ = %@", fieldName, newValue ? @"YES" : @"NO");
-    
-    // تعديل القيمة في الكائن
-    [self setValue:newValue ? @"1" : @"0" forField:fieldName];
-    
-    [self showFeedback:[NSString stringWithFormat:@"%@ = %@", fieldName, newValue ? @"ON" : @"OFF"]];
+void closeMenu() {
+    isMenuVisible = NO;
+    menuWindow.hidden = YES;
 }
 
-// ============================================================
-// ===== 6. معالجة زر التطبيق =====
-// ============================================================
-- (void)applyFieldValue:(UIButton *)sender {
-    UIView *itemView = sender.superview;
-    if (!itemView) return;
-    
-    UITextField *inputField = nil;
-    for (UIView *subview in itemView.subviews) {
+void setFloatValue(id sender) {
+    UIButton *btn = (UIButton *)sender;
+    UIView *container = btn.superview;
+    UITextField *field = nil;
+    for (UIView *subview in container.subviews) {
         if ([subview isKindOfClass:[UITextField class]]) {
-            inputField = (UITextField *)subview;
+            field = (UITextField *)subview;
             break;
         }
     }
+    if (!field) return;
     
-    if (!inputField) return;
-    
-    UILabel *label = nil;
-    for (UIView *subview in itemView.subviews) {
-        if ([subview isKindOfClass:[UILabel class]]) {
-            label = (UILabel *)subview;
+    float value = [field.text floatValue];
+    NSString *key = nil;
+    for (NSString *k in inputFields.allKeys) {
+        NSDictionary *data = inputFields[k];
+        if ([data[@"field"] isEqual:field]) {
+            key = k;
             break;
         }
     }
+    if (!key) return;
     
-    if (!label) return;
+    // تحديث الإعدادات
+    if ([key isEqualToString:@"jump_height"]) g_settings.jumpHeight = value;
+    else if ([key isEqualToString:@"air_jump"]) g_settings.airJumpHeight = value;
+    else if ([key isEqualToString:@"speed"]) g_settings.speed = value;
+    else if ([key isEqualToString:@"gravity"]) g_settings.gravity = value;
+    else if ([key isEqualToString:@"roll_duration"]) g_settings.rollDuration = value;
+    else if ([key isEqualToString:@"dive_velocity"]) g_settings.diveVelocity = value;
+    else if ([key isEqualToString:@"surface_speed"]) g_settings.surfaceMaxUpwardsSpeed = value;
+    else if ([key isEqualToString:@"wall_speed"]) g_settings.wallClimbSpeed = value;
+    else if ([key isEqualToString:@"boost_max"]) g_settings.speedBoostMax = value;
     
-    NSString *fieldName = label.text;
-    NSString *newValue = inputField.text;
+    [self showFeedback:[NSString stringWithFormat:@"Set to %.2f", value]];
+}
+
+void setIntValue(id sender) {
+    UIButton *btn = (UIButton *)sender;
+    UIView *container = btn.superview;
+    UITextField *field = nil;
+    for (UIView *subview in container.subviews) {
+        if ([subview isKindOfClass:[UITextField class]]) {
+            field = (UITextField *)subview;
+            break;
+        }
+    }
+    if (!field) return;
     
-    NSLog(@"✅ Apply: %@ = %@", fieldName, newValue);
+    int value = [field.text intValue];
+    NSString *key = nil;
+    for (NSString *k in inputFields.allKeys) {
+        NSDictionary *data = inputFields[k];
+        if ([data[@"field"] isEqual:field]) {
+            key = k;
+            break;
+        }
+    }
+    if (!key) return;
     
-    // تعديل القيمة في الكائن
-    BOOL success = [self setValue:newValue forField:fieldName];
-    
-    if (success) {
-        [self showFeedback:[NSString stringWithFormat:@"✅ %@ = %@", fieldName, newValue]];
-    } else {
-        [self showFeedback:[NSString stringWithFormat:@"❌ Failed to set %@", fieldName]];
+    if ([key isEqualToString:@"route_seed"]) {
+        g_settings.routeSeed = value;
+        [self showFeedback:[NSString stringWithFormat:@"Seed set to %d", value]];
     }
 }
 
-// ============================================================
-// ===== 7. دالة تعديل القيمة فعلياً =====
-// ============================================================
-- (BOOL)setValue:(NSString *)newValue forField:(NSString *)fieldName {
-    if (!self.motorConfigInstance) {
-        NSLog(@"❌ No motor config instance");
-        return NO;
+void toggleChanged(UISwitch *sender) {
+    NSString *key = nil;
+    for (NSString *k in inputFields.allKeys) {
+        NSDictionary *data = inputFields[k];
+        if ([data[@"toggle"] isEqual:sender]) {
+            key = k;
+            break;
+        }
     }
+    if (!key) return;
     
-    // البحث عن الـ Ivar
-    Ivar ivar = class_getInstanceVariable([self.motorConfigInstance class], [fieldName UTF8String]);
-    if (!ivar) {
-        // محاولة البحث بالاسم بدون تغيير
-        NSString *searchName = fieldName;
-        ivar = class_getInstanceVariable([self.motorConfigInstance class], [searchName UTF8String]);
-    }
+    BOOL value = sender.isOn;
     
-    if (!ivar) {
-        NSLog(@"❌ Field '%@' not found", fieldName);
-        return NO;
-    }
+    if ([key isEqualToString:@"godmode_toggle"]) g_settings.godmode = value;
+    else if ([key isEqualToString:@"stick_toggle"]) g_settings.stickToGround = value;
+    else if ([key isEqualToString:@"wall_toggle"]) g_settings.wallClimbEnabled = value;
+    else if ([key isEqualToString:@"seed_toggle"]) g_settings.seedOverride = value;
+    else if ([key isEqualToString:@"coin_toggle"]) g_settings.noCoinPickup = value;
     
-    const char *type = ivar_getTypeEncoding(ivar);
-    NSLog(@"📌 Setting %@ to %@ (type: %s)", fieldName, newValue, type);
-    
-    @try {
-        if (strcmp(type, "f") == 0) {
-            float floatValue = [newValue floatValue];
-            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithFloat:floatValue]);
-        } else if (strcmp(type, "d") == 0) {
-            double doubleValue = [newValue doubleValue];
-            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithDouble:doubleValue]);
-        } else if (strcmp(type, "i") == 0 || strcmp(type, "l") == 0 || strcmp(type, "q") == 0) {
-            int intValue = [newValue intValue];
-            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithInt:intValue]);
-        } else if (strcmp(type, "B") == 0 || strcmp(type, "c") == 0) {
-            BOOL boolValue = [newValue boolValue] || [newValue isEqualToString:@"1"] || [newValue isEqualToString:@"YES"] || [newValue isEqualToString:@"True"];
-            object_setIvar(self.motorConfigInstance, ivar, [NSNumber numberWithBool:boolValue]);
-        } else if (strcmp(type, "@") == 0) {
-            // كائن (Object)
-            object_setIvar(self.motorConfigInstance, ivar, newValue);
-        } else if (strcmp(type, "s") == 0) {
-            // سلسلة نصية (String)
-            object_setIvar(self.motorConfigInstance, ivar, newValue);
-        } else {
-            NSLog(@"⚠️ Unsupported type: %s", type);
-            return NO;
+    [self showFeedback:value ? @"Enabled" : @"Disabled"];
+}
+
+void applyAllSettings() {
+    NSLog(@"Applying all settings...");
+    apply_modifications();
+    [self showFeedback:@"All settings applied!"];
+}
+
+void showFeedback(NSString *message) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = menuWindow;
+        if (!window) return;
+        
+        UILabel *feedback = [[UILabel alloc] initWithFrame:CGRectMake(10, 480, 320, 20)];
+        feedback.text = message;
+        feedback.font = [UIFont systemFontOfSize:12];
+        feedback.textColor = [UIColor colorWithWhite:0.6 alpha:1];
+        feedback.textAlignment = NSTextAlignmentCenter;
+        feedback.tag = 999;
+        
+        for (UIView *view in window.subviews) {
+            if (view.tag == 999) [view removeFromSuperview];
         }
         
-        NSLog(@"✅ Successfully set %@ = %@", fieldName, newValue);
-        return YES;
-    } @catch (NSException *exception) {
-        NSLog(@"❌ Exception: %@", exception);
-        return NO;
-    }
-}
-
-// ============================================================
-// ===== 8. دوال التحكم في المينو =====
-// ============================================================
-- (void)toggleMenu {
-    _isMenuVisible = !_isMenuVisible;
-    _menuView.hidden = !_isMenuVisible;
-    if (_isMenuVisible) {
-        [self.superview bringSubviewToFront:self];
-        // إعادة تحميل القيم عند فتح المينو
-        [self refreshValues];
-    }
-}
-
-- (void)refreshValues {
-    // تحديث القيم المعروضة في المينو
-    for (NSString *key in self.fieldsUI.allKeys) {
-        NSDictionary *data = self.fieldsUI[key];
-        if (!data) continue;
+        [window addSubview:feedback];
         
-        // ===== ✅ التصحيح هنا: إضافة (Ivar) cast =====
-        Ivar ivar = (Ivar)[[data objectForKey:@"ivar"] pointerValue];
-        if (ivar && self.motorConfigInstance) {
-            id value = object_getIvar(self.motorConfigInstance, ivar);
-            NSString *valueString = [NSString stringWithFormat:@"%@", value];
-            
-            UITextField *inputField = [data objectForKey:@"inputField"];
-            if (inputField) {
-                inputField.text = valueString;
-            }
-            
-            UISwitch *toggle = [data objectForKey:@"toggle"];
-            if (toggle) {
-                toggle.on = [valueString isEqualToString:@"1"] || [valueString isEqualToString:@"YES"] || [valueString isEqualToString:@"True"];
-            }
-        }
-    }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [feedback removeFromSuperview];
+        });
+    });
 }
-
-- (void)showFeedback:(NSString *)message {
-    // إزالة أي رسالة سابقة
-    for (UIView *view in self.menuView.subviews) {
-        if ([view isKindOfClass:[UILabel class]] && view.tag == 999) {
-            [view removeFromSuperview];
-        }
-    }
-    
-    UILabel *feedbackLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 265, 260, 20)];
-    feedbackLabel.text = message;
-    feedbackLabel.font = [UIFont fontWithName:@"HelveticaNeue" size:11];
-    feedbackLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1];
-    feedbackLabel.textAlignment = NSTextAlignmentCenter;
-    feedbackLabel.tag = 999;
-    feedbackLabel.userInteractionEnabled = NO;
-    [_menuView addSubview:feedbackLabel];
-    
-    [self performSelector:@selector(clearFeedback) withObject:nil afterDelay:2.5];
-}
-
-- (void)clearFeedback {
-    for (UIView *view in self.menuView.subviews) {
-        if ([view isKindOfClass:[UILabel class]] && view.tag == 999) {
-            [view removeFromSuperview];
-        }
-    }
-}
-
-- (void)updateContentSize {
-    CGFloat totalHeight = self.contentView.subviews.count * 46 + 10;
-    if (totalHeight < 200) totalHeight = 200;
-    CGRect frame = self.contentView.frame;
-    frame.size.height = totalHeight;
-    self.contentView.frame = frame;
-    self.scrollView.contentSize = CGSizeMake(260, totalHeight);
-}
-
-- (void)handlePan:(UIPanGestureRecognizer *)gr {
-    CGPoint translation = [gr translationInView:self.superview];
-    self.center = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
-    [gr setTranslation:CGPointZero inView:self.superview];
-}
-
-@end
 
 // ============================================================
-// ===== 9. دوال الحقن (Injection) =====
+// ===== 7. نقطة الدخول =====
 // ============================================================
-static FrezonModOverlay *overlay;
-
-static UIWindow *currentKeyWindow(void) {
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]] &&
-                scene.activationState == UISceneActivationStateForegroundActive) {
-                for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-                    if (w.isKeyWindow) return w;
-                }
-            }
-        }
-    }
-    return [UIApplication sharedApplication].keyWindow;
-}
-
-static void ensureOverlay(void) {
-    UIWindow *window = currentKeyWindow();
-    if (!window) return;
-    if (overlay.superview == window) return;
-    
-    if (!overlay) {
-        overlay = [[FrezonModOverlay alloc] init];
-    }
-    [window addSubview:overlay];
-    [window bringSubviewToFront:overlay];
-}
-
 __attribute__((constructor))
-static void frezonmod_entry(void) {
-    dispatch_time_t delay = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC));
-    dispatch_after(delay, dispatch_get_main_queue(), ^{
-        ensureOverlay();
-        [NSTimer scheduledTimerWithTimeInterval:3.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
-            ensureOverlay();
-        }];
+static void frezonmod_entry() {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [UIApplication sharedApplication].keyWindow;
+        if (!window) return;
+        
+        // تحميل UnityFramework
+        loadUnityFramework();
+        init_il2cpp_functions();
+        
+        // زر المنيو
+        UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        menuBtn.frame = CGRectMake(20, 100, 60, 60);
+        menuBtn.layer.cornerRadius = 30;
+        menuBtn.backgroundColor = [UIColor blackColor];
+        menuBtn.layer.borderColor = [UIColor whiteColor].CGColor;
+        menuBtn.layer.borderWidth = 1.5;
+        [menuBtn setTitle:@"F" forState:UIControlStateNormal];
+        [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        menuBtn.titleLabel.font = [UIFont boldSystemFontOfSize:24];
+        [menuBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+        [window addSubview:menuBtn];
+        
+        // البحث عن العناوين
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            find_motor_config_address();
+            find_route_config_address();
+            apply_modifications();
+        });
     });
 }
