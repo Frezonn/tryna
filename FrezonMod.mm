@@ -64,7 +64,6 @@ void *find_class_in_il2cpp(const char *namespaze, const char *name) {
     
     if (!assemblies) return NULL;
     
-    // في IL2CPP، assemblies هو مصفوفة من المؤشرات
     void **assemblyArray = (void **)assemblies;
     for (size_t i = 0; i < assembly_count; i++) {
         void *image = il2cpp_assembly_get_image(assemblyArray[i]);
@@ -75,7 +74,7 @@ void *find_class_in_il2cpp(const char *namespaze, const char *name) {
 }
 
 // ============================================================
-// ===== 3. Offsets من Assembly-CSharp =====
+// ===== 3. Offsets =====
 // ============================================================
 #define OFFSET_GRAVITY                      0x18
 #define OFFSET_STICK_TO_GROUND              0x1C
@@ -99,12 +98,11 @@ void *find_class_in_il2cpp(const char *namespaze, const char *name) {
 #define OFFSET_WALL_CLIMB_TARGET_SPEED      0xA4
 #define OFFSET_SPEED_BOOST_MAX_SPEED        0xAC
 
-// RouteConfig Offsets
 #define OFFSET_ROUTE_SEED                   0x20
 #define OFFSET_ROUTE_FORCE_SEED             0x24
 
 // ============================================================
-// ===== 4. هيكل التخزين للقيم =====
+// ===== 4. الإعدادات =====
 // ============================================================
 typedef struct {
     float jumpHeight;
@@ -113,7 +111,6 @@ typedef struct {
     float gravity;
     float rollDuration;
     float wallClimbSpeed;
-    float diveVelocity;
     float surfaceMaxUpwardsSpeed;
     float speedBoostMax;
     bool godmode;
@@ -131,7 +128,6 @@ static ModSettings g_settings = {
     .gravity = -50.0f,
     .rollDuration = 0.1f,
     .wallClimbSpeed = 50.0f,
-    .diveVelocity = -200.0f,
     .surfaceMaxUpwardsSpeed = 200.0f,
     .speedBoostMax = 300.0f,
     .godmode = true,
@@ -142,12 +138,12 @@ static ModSettings g_settings = {
     .seedOverride = true
 };
 
-// ============================================================
-// ===== 5. دوال تعديل الذاكرة =====
-// ============================================================
 uintptr_t g_configAddress = 0;
 uintptr_t g_routeConfigAddress = 0;
 
+// ============================================================
+// ===== 5. دوال الذاكرة =====
+// ============================================================
 void find_motor_config_address() {
     if (g_configAddress != 0) return;
     
@@ -171,27 +167,9 @@ void find_motor_config_address() {
     }
 }
 
-void find_route_config_address() {
-    if (g_routeConfigAddress != 0) return;
-    
-    Class routeConfigClass = objc_getClass("SYBO.Subway.RouteConfig");
-    if (routeConfigClass) {
-        Ivar seedIvar = class_getInstanceVariable(routeConfigClass, "_forceSeed");
-        if (seedIvar) {
-            id instance = [routeConfigClass performSelector:@selector(instance)];
-            if (instance) {
-                g_routeConfigAddress = (uintptr_t)instance;
-                NSLog(@"RouteConfig found at: 0x%lx", (unsigned long)g_routeConfigAddress);
-                return;
-            }
-        }
-    }
-}
-
 void apply_modifications() {
     mach_port_t task = mach_task_self();
     find_motor_config_address();
-    find_route_config_address();
     
     if (g_configAddress == 0) {
         NSLog(@"MotorConfig not found");
@@ -200,9 +178,7 @@ void apply_modifications() {
     
     // Godmode
     if (g_settings.godmode) {
-        float zero = 0.0f;
-        float huge = 1000.0f;
-        float tiny = 0.01f;
+        float zero = 0.0f, huge = 1000.0f, tiny = 0.01f;
         
         uintptr_t addrs[] = {
             g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION,
@@ -215,7 +191,6 @@ void apply_modifications() {
             g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX,
             g_configAddress + OFFSET_CORNER_IMPACT_REGION_WIDTH
         };
-        
         float values[] = {zero, zero, huge, -huge, zero, zero, zero, zero, zero};
         
         for (int i = 0; i < 9; i++) {
@@ -226,7 +201,6 @@ void apply_modifications() {
         uintptr_t colliderAddr = g_configAddress + OFFSET_COLLIDER_HEIGHT;
         vm_protect(task, (vm_address_t)colliderAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
         *(float *)colliderAddr = tiny;
-        
         NSLog(@"Godmode activated");
     }
     
@@ -270,11 +244,6 @@ void apply_modifications() {
     vm_protect(task, (vm_address_t)stickAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
     *(bool *)stickAddr = g_settings.stickToGround;
     
-    // Dive Velocity
-    uintptr_t diveAddr = g_configAddress + OFFSET_JUMP_DIVE_VELOCITY_Y;
-    vm_protect(task, (vm_address_t)diveAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)diveAddr = g_settings.diveVelocity;
-    
     // Surface Max Upwards Speed
     uintptr_t surfaceAddr = g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED;
     vm_protect(task, (vm_address_t)surfaceAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
@@ -285,38 +254,15 @@ void apply_modifications() {
     vm_protect(task, (vm_address_t)boostAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
     *(float *)boostAddr = g_settings.speedBoostMax;
     
-    // Route Seed
-    if (g_routeConfigAddress != 0 && g_settings.seedOverride) {
-        uintptr_t seedAddr = g_routeConfigAddress + OFFSET_ROUTE_SEED;
-        uintptr_t forceSeedAddr = g_routeConfigAddress + OFFSET_ROUTE_FORCE_SEED;
-        vm_protect(task, (vm_address_t)seedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)forceSeedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(int *)seedAddr = g_settings.routeSeed;
-        *(int *)forceSeedAddr = 1;
-    }
-    
     NSLog(@"All settings applied!");
 }
 
 // ============================================================
-// ===== 6. واجهة المستخدم =====
+// ===== 6. دوال UI =====
 // ============================================================
 static UIWindow *menuWindow;
 static BOOL isMenuVisible = NO;
 
-// دوال UI
-CGFloat addSectionHeader(UIView *parent, CGFloat y, NSString *title);
-CGFloat addSeparator(UIView *parent, CGFloat y);
-CGFloat addFloatField(UIView *parent, CGFloat y, NSString *label, float value, NSString *key);
-CGFloat addIntField(UIView *parent, CGFloat y, NSString *label, int value, NSString *key);
-CGFloat addToggleWithLabel(UIView *parent, CGFloat y, NSString *label, BOOL value, NSString *key);
-void setFloatValue(id sender);
-void setIntValue(id sender);
-void toggleChanged(UISwitch *sender);
-void applyAllSettings();
-void showFeedback(NSString *message);
-
-// تنفيذ دوال UI
 CGFloat addSectionHeader(UIView *parent, CGFloat y, NSString *title) {
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, y, 300, 30)];
     label.text = title;
@@ -447,7 +393,6 @@ void setFloatValue(id sender) {
     
     float value = [field.text floatValue];
     
-    // تحديث الإعدادات حسب الـ label
     UILabel *label = nil;
     for (UIView *subview in container.subviews) {
         if ([subview isKindOfClass:[UILabel class]]) {
@@ -467,8 +412,6 @@ void setFloatValue(id sender) {
         g_settings.gravity = value;
     } else if ([labelText containsString:@"Roll"]) {
         g_settings.rollDuration = value;
-    } else if ([labelText containsString:@"Dive"]) {
-        g_settings.diveVelocity = value;
     } else if ([labelText containsString:@"Surface"]) {
         g_settings.surfaceMaxUpwardsSpeed = value;
     } else if ([labelText containsString:@"Wall"]) {
@@ -548,9 +491,6 @@ void showFeedback(NSString *message) {
     });
 }
 
-// ============================================================
-// ===== 7. بناء واجهة المنيو =====
-// ============================================================
 void createMenuUI() {
     UIWindow *window = [UIApplication sharedApplication].keyWindow;
     if (!window) return;
@@ -564,7 +504,6 @@ void createMenuUI() {
     menuWindow.windowLevel = UIWindowLevelAlert + 1;
     menuWindow.userInteractionEnabled = YES;
     
-    // ===== الهيدر =====
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 50)];
     header.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
     [menuWindow addSubview:header];
@@ -582,13 +521,11 @@ void createMenuUI() {
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:closeBtn];
     
-    // ===== ScrollView =====
     UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 50, 340, 470)];
     scrollView.backgroundColor = [UIColor clearColor];
     scrollView.showsVerticalScrollIndicator = YES;
     scrollView.userInteractionEnabled = YES;
     scrollView.scrollEnabled = YES;
-    scrollView.bounces = YES;
     [menuWindow addSubview:scrollView];
     
     UIView *contentView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 10)];
@@ -598,46 +535,38 @@ void createMenuUI() {
     
     CGFloat yOffset = 10;
     
-    // ===== Godmode =====
     yOffset = addSectionHeader(contentView, yOffset, @"Godmode");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Godmode", g_settings.godmode, @"godmode_toggle");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== Player Physics =====
     yOffset = addSectionHeader(contentView, yOffset, @"Player Physics");
     yOffset = addFloatField(contentView, yOffset, @"Jump Height", g_settings.jumpHeight, @"jump_height");
     yOffset = addFloatField(contentView, yOffset, @"Air Jump Height", g_settings.airJumpHeight, @"air_jump");
     yOffset = addFloatField(contentView, yOffset, @"Speed", g_settings.speed, @"speed");
     yOffset = addFloatField(contentView, yOffset, @"Gravity", g_settings.gravity, @"gravity");
     yOffset = addFloatField(contentView, yOffset, @"Roll Duration", g_settings.rollDuration, @"roll_duration");
-    yOffset = addFloatField(contentView, yOffset, @"Dive Velocity", g_settings.diveVelocity, @"dive_velocity");
-    yOffset = addFloatField(contentView, yOffset, @"Surface Max Upwards Speed", g_settings.surfaceMaxUpwardsSpeed, @"surface_speed");
+    yOffset = addFloatField(contentView, yOffset, @"Surface Max Speed", g_settings.surfaceMaxUpwardsSpeed, @"surface_speed");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Stick to Ground", g_settings.stickToGround, @"stick_toggle");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== Wall Climb =====
     yOffset = addSectionHeader(contentView, yOffset, @"Wall Climb");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Wall Climb Enabled", g_settings.wallClimbEnabled, @"wall_toggle");
     yOffset = addFloatField(contentView, yOffset, @"Wall Climb Speed", g_settings.wallClimbSpeed, @"wall_speed");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== Speed Boost =====
     yOffset = addSectionHeader(contentView, yOffset, @"Speed Boost");
     yOffset = addFloatField(contentView, yOffset, @"Speed Boost Max", g_settings.speedBoostMax, @"boost_max");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== Route Seed =====
-    yOffset = addSectionHeader(contentView, yOffset, @"Route Seed Override");
+    yOffset = addSectionHeader(contentView, yOffset, @"Route Seed");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Seed Override", g_settings.seedOverride, @"seed_toggle");
     yOffset = addIntField(contentView, yOffset, @"Route Seed", g_settings.routeSeed, @"route_seed");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== Coin Pickup =====
     yOffset = addSectionHeader(contentView, yOffset, @"Coin Pickup");
     yOffset = addToggleWithLabel(contentView, yOffset, @"No Coin Pickup", g_settings.noCoinPickup, @"coin_toggle");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ===== زر تطبيق الكل =====
     UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     applyBtn.frame = CGRectMake(20, yOffset + 10, 300, 44);
     applyBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
@@ -649,7 +578,6 @@ void createMenuUI() {
     [contentView addSubview:applyBtn];
     yOffset += 60;
     
-    // تحديث حجم المحتوى
     CGRect frame = contentView.frame;
     frame.size.height = yOffset + 20;
     contentView.frame = frame;
@@ -658,9 +586,6 @@ void createMenuUI() {
     [menuWindow makeKeyAndVisible];
 }
 
-// ============================================================
-// ===== 8. دوال التحكم =====
-// ============================================================
 void toggleMenu() {
     if (!menuWindow) {
         createMenuUI();
@@ -678,7 +603,7 @@ void closeMenu() {
 }
 
 // ============================================================
-// ===== 9. نقطة الدخول =====
+// ===== 7. نقطة الدخول =====
 // ============================================================
 __attribute__((constructor))
 static void frezonmod_entry() {
@@ -686,11 +611,9 @@ static void frezonmod_entry() {
         UIWindow *window = [UIApplication sharedApplication].keyWindow;
         if (!window) return;
         
-        // تحميل UnityFramework
         loadUnityFramework();
         init_il2cpp_functions();
         
-        // زر المنيو
         UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         menuBtn.frame = CGRectMake(20, 100, 60, 60);
         menuBtn.layer.cornerRadius = 30;
@@ -699,3 +622,13 @@ static void frezonmod_entry() {
         menuBtn.layer.borderWidth = 1.5;
         [menuBtn setTitle:@"F" forState:UIControlStateNormal];
         [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        menuBtn.titleLabel.font = [UIFont boldSystemFontOfSize:24];
+        [menuBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+        [window addSubview:menuBtn];
+        
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            find_motor_config_address();
+            apply_modifications();
+        });
+    });
+}
