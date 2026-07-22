@@ -4,109 +4,41 @@
 #import <dlfcn.h>
 #import <mach/mach.h>
 
-// ============================================================
 // ===== 1. تحميل UnityFramework =====
-// ============================================================
 static void *unityFrameworkHandle = NULL;
 
 void loadUnityFramework() {
     const char *paths[] = {
         "Subwaysurf.app/Frameworks/UnityFramework.framework/UnityFramework",
         "Frameworks/UnityFramework.framework/UnityFramework",
-        "/System/Library/Frameworks/UnityFramework.framework/UnityFramework",
         "UnityFramework"
     };
     
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         unityFrameworkHandle = dlopen(paths[i], RTLD_LAZY);
         if (unityFrameworkHandle) {
             NSLog(@"UnityFramework loaded from: %s", paths[i]);
             return;
         }
     }
-    
-    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-    NSString *frameworkPath = [bundlePath stringByAppendingPathComponent:@"Frameworks/UnityFramework.framework/UnityFramework"];
-    unityFrameworkHandle = dlopen([frameworkPath UTF8String], RTLD_LAZY);
-    
-    if (unityFrameworkHandle) {
-        NSLog(@"UnityFramework loaded from bundle path: %@", frameworkPath);
-    } else {
-        NSLog(@"Failed to load UnityFramework");
-    }
 }
 
-// ============================================================
-// ===== 2. IL2CPP دوال البحث =====
-// ============================================================
-typedef void *(*il2cpp_class_from_name_t)(void *image, const char *namespaze, const char *name);
-typedef void *(*il2cpp_assembly_get_image_t)(void *assembly);
-typedef void *(*il2cpp_domain_get_assemblies_t)(void *domain, size_t *size);
+// ===== 2. Offsets =====
+#define OFFSET_JUMP_HEIGHT       0x4C
+#define OFFSET_GRAVITY           0x18
+#define OFFSET_INITIAL_TARGET_SPEED 0x24
+#define OFFSET_FINAL_TARGET_SPEED 0x28
+#define OFFSET_ROLL_DURATION     0x5C
+#define OFFSET_COLLIDER_HEIGHT   0x64
+#define OFFSET_STICK_TO_GROUND   0x1C
+#define OFFSET_WALL_CLIMB_ENABLED 0x90
+#define OFFSET_WALL_CLIMB_TARGET_SPEED 0xA4
+#define OFFSET_SPEED_BOOST_MAX_SPEED 0xAC
+#define OFFSET_SURFACE_MAX_UPWARDS_SPEED 0x8C
 
-static il2cpp_class_from_name_t il2cpp_class_from_name = NULL;
-static il2cpp_assembly_get_image_t il2cpp_assembly_get_image = NULL;
-static il2cpp_domain_get_assemblies_t il2cpp_domain_get_assemblies = NULL;
-
-void init_il2cpp_functions() {
-    if (!unityFrameworkHandle) return;
-    
-    il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(unityFrameworkHandle, "il2cpp_class_from_name");
-    il2cpp_assembly_get_image = (il2cpp_assembly_get_image_t)dlsym(unityFrameworkHandle, "il2cpp_assembly_get_image");
-    il2cpp_domain_get_assemblies = (il2cpp_domain_get_assemblies_t)dlsym(unityFrameworkHandle, "il2cpp_domain_get_assemblies");
-}
-
-void *find_class_in_il2cpp(const char *namespaze, const char *name) {
-    if (!il2cpp_class_from_name) return NULL;
-    
-    size_t assembly_count = 0;
-    void *domain = NULL;
-    void *assemblies = il2cpp_domain_get_assemblies(domain, &assembly_count);
-    
-    if (!assemblies) return NULL;
-    
-    void **assemblyArray = (void **)assemblies;
-    for (size_t i = 0; i < assembly_count; i++) {
-        void *image = il2cpp_assembly_get_image(assemblyArray[i]);
-        void *klass = il2cpp_class_from_name(image, namespaze, name);
-        if (klass) return klass;
-    }
-    return NULL;
-}
-
-// ============================================================
-// ===== 3. Offsets =====
-// ============================================================
-#define OFFSET_GRAVITY                      0x18
-#define OFFSET_STICK_TO_GROUND              0x1C
-#define OFFSET_INITIAL_TARGET_SPEED         0x24
-#define OFFSET_FINAL_TARGET_SPEED           0x28
-#define OFFSET_JUMP_HEIGHT                  0x4C
-#define OFFSET_AIR_JUMP_HEIGHT              0x50
-#define OFFSET_ROLL_DURATION                0x5C
-#define OFFSET_COLLIDER_HEIGHT              0x64
-#define OFFSET_LOWER_IMPACT_MAX_HEIGHT      0x68
-#define OFFSET_UPPER_IMPACT_MIN_HEIGHT      0x6C
-#define OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION 0x70
-#define OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE 0x74
-#define OFFSET_FRONTAL_IMPACT_TIMEOUT       0x78
-#define OFFSET_LOWER_IMPACT_HEIGHT_RATIO    0x7C
-#define OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN 0x80
-#define OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX 0x84
-#define OFFSET_CORNER_IMPACT_REGION_WIDTH   0x88
-#define OFFSET_SURFACE_MAX_UPWARDS_SPEED    0x8C
-#define OFFSET_WALL_CLIMB_ENABLED           0x90
-#define OFFSET_WALL_CLIMB_TARGET_SPEED      0xA4
-#define OFFSET_SPEED_BOOST_MAX_SPEED        0xAC
-
-#define OFFSET_ROUTE_SEED                   0x20
-#define OFFSET_ROUTE_FORCE_SEED             0x24
-
-// ============================================================
-// ===== 4. الإعدادات =====
-// ============================================================
+// ===== 3. الإعدادات =====
 typedef struct {
     float jumpHeight;
-    float airJumpHeight;
     float speed;
     float gravity;
     float rollDuration;
@@ -114,16 +46,12 @@ typedef struct {
     float surfaceMaxUpwardsSpeed;
     float speedBoostMax;
     bool godmode;
-    bool noCoinPickup;
-    bool wallClimbEnabled;
     bool stickToGround;
-    int routeSeed;
-    bool seedOverride;
+    bool wallClimbEnabled;
 } ModSettings;
 
 static ModSettings g_settings = {
     .jumpHeight = 50.0f,
-    .airJumpHeight = 50.0f,
     .speed = 200.0f,
     .gravity = -50.0f,
     .rollDuration = 0.1f,
@@ -131,18 +59,13 @@ static ModSettings g_settings = {
     .surfaceMaxUpwardsSpeed = 200.0f,
     .speedBoostMax = 300.0f,
     .godmode = true,
-    .noCoinPickup = true,
-    .wallClimbEnabled = true,
     .stickToGround = true,
-    .routeSeed = 12345,
-    .seedOverride = true
+    .wallClimbEnabled = true
 };
 
 uintptr_t g_configAddress = 0;
 
-// ============================================================
-// ===== 5. دوال الذاكرة =====
-// ============================================================
+// ===== 4. دوال الذاكرة =====
 void find_motor_config_address() {
     if (g_configAddress != 0) return;
     
@@ -180,15 +103,15 @@ void apply_modifications() {
         float zero = 0.0f, huge = 1000.0f, tiny = 0.01f;
         
         uintptr_t addrs[] = {
-            g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION,
-            g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE,
-            g_configAddress + OFFSET_LOWER_IMPACT_MAX_HEIGHT,
-            g_configAddress + OFFSET_UPPER_IMPACT_MIN_HEIGHT,
-            g_configAddress + OFFSET_FRONTAL_IMPACT_TIMEOUT,
-            g_configAddress + OFFSET_LOWER_IMPACT_HEIGHT_RATIO,
-            g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN,
-            g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX,
-            g_configAddress + OFFSET_CORNER_IMPACT_REGION_WIDTH
+            g_configAddress + 0x70, // FrontalImpactKnockbackDuration
+            g_configAddress + 0x74, // FrontalImpactKnockbackDistance
+            g_configAddress + 0x68, // LowerImpactMaxHeight
+            g_configAddress + 0x6C, // UpperImpactMinHeight
+            g_configAddress + 0x78, // FrontalImpactTimeout
+            g_configAddress + 0x7C, // LowerImpactHeightRatio
+            g_configAddress + 0x80, // CornerImpactRegionDepthMin
+            g_configAddress + 0x84, // CornerImpactRegionDepthMax
+            g_configAddress + 0x88  // CornerImpactRegionWidth
         };
         float values[] = {zero, zero, huge, -huge, zero, zero, zero, zero, zero};
         
@@ -197,401 +120,114 @@ void apply_modifications() {
             *(float *)addrs[i] = values[i];
         }
         
-        uintptr_t colliderAddr = g_configAddress + OFFSET_COLLIDER_HEIGHT;
-        vm_protect(task, (vm_address_t)colliderAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)colliderAddr = tiny;
+        vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_COLLIDER_HEIGHT), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)(g_configAddress + OFFSET_COLLIDER_HEIGHT) = tiny;
         NSLog(@"Godmode activated");
     }
     
     // Jump Height
-    uintptr_t jumpAddr = g_configAddress + OFFSET_JUMP_HEIGHT;
-    uintptr_t airJumpAddr = g_configAddress + OFFSET_AIR_JUMP_HEIGHT;
-    vm_protect(task, (vm_address_t)jumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    vm_protect(task, (vm_address_t)airJumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)jumpAddr = g_settings.jumpHeight;
-    *(float *)airJumpAddr = g_settings.airJumpHeight;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_JUMP_HEIGHT), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_JUMP_HEIGHT) = g_settings.jumpHeight;
     
     // Speed
-    uintptr_t initSpeed = g_configAddress + OFFSET_INITIAL_TARGET_SPEED;
-    uintptr_t finalSpeed = g_configAddress + OFFSET_FINAL_TARGET_SPEED;
-    vm_protect(task, (vm_address_t)initSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    vm_protect(task, (vm_address_t)finalSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)initSpeed = g_settings.speed;
-    *(float *)finalSpeed = g_settings.speed;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_INITIAL_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_FINAL_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_INITIAL_TARGET_SPEED) = g_settings.speed;
+    *(float *)(g_configAddress + OFFSET_FINAL_TARGET_SPEED) = g_settings.speed;
     
     // Gravity
-    uintptr_t gravityAddr = g_configAddress + OFFSET_GRAVITY;
-    vm_protect(task, (vm_address_t)gravityAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)gravityAddr = g_settings.gravity;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_GRAVITY), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_GRAVITY) = g_settings.gravity;
     
     // Roll Duration
-    uintptr_t rollAddr = g_configAddress + OFFSET_ROLL_DURATION;
-    vm_protect(task, (vm_address_t)rollAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)rollAddr = g_settings.rollDuration;
-    
-    // Wall Climb
-    uintptr_t wallClimbAddr = g_configAddress + OFFSET_WALL_CLIMB_ENABLED;
-    vm_protect(task, (vm_address_t)wallClimbAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)wallClimbAddr = g_settings.wallClimbEnabled;
-    
-    uintptr_t wallSpeedAddr = g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED;
-    vm_protect(task, (vm_address_t)wallSpeedAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)wallSpeedAddr = g_settings.wallClimbSpeed;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_ROLL_DURATION), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_ROLL_DURATION) = g_settings.rollDuration;
     
     // Stick to Ground
-    uintptr_t stickAddr = g_configAddress + OFFSET_STICK_TO_GROUND;
-    vm_protect(task, (vm_address_t)stickAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)stickAddr = g_settings.stickToGround;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_STICK_TO_GROUND), sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(bool *)(g_configAddress + OFFSET_STICK_TO_GROUND) = g_settings.stickToGround;
+    
+    // Wall Climb
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_WALL_CLIMB_ENABLED), sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(bool *)(g_configAddress + OFFSET_WALL_CLIMB_ENABLED) = g_settings.wallClimbEnabled;
+    
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED) = g_settings.wallClimbSpeed;
     
     // Surface Max Upwards Speed
-    uintptr_t surfaceAddr = g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED;
-    vm_protect(task, (vm_address_t)surfaceAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)surfaceAddr = g_settings.surfaceMaxUpwardsSpeed;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED) = g_settings.surfaceMaxUpwardsSpeed;
     
     // Speed Boost
-    uintptr_t boostAddr = g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED;
-    vm_protect(task, (vm_address_t)boostAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)boostAddr = g_settings.speedBoostMax;
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED) = g_settings.speedBoostMax;
     
     NSLog(@"All settings applied!");
 }
 
-// ============================================================
-// ===== 6. دوال UI =====
-// ============================================================
+// ===== 5. دوال UI =====
 static UIWindow *menuWindow;
 static BOOL isMenuVisible = NO;
 
-// إعلان الدوال
-void showFeedback(NSString *message);
-
-CGFloat addSectionHeader(UIView *parent, CGFloat y, NSString *title) {
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, y, 300, 30)];
-    label.text = title;
-    label.font = [UIFont boldSystemFontOfSize:16];
-    label.textColor = [UIColor colorWithWhite:0.7 alpha:1];
-    label.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
-    label.layer.cornerRadius = 4;
-    label.clipsToBounds = YES;
-    label.textAlignment = NSTextAlignmentCenter;
-    [parent addSubview:label];
-    return y + 35;
-}
-
-CGFloat addSeparator(UIView *parent, CGFloat y) {
-    UIView *line = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 1)];
-    line.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
-    [parent addSubview:line];
-    return y + 10;
-}
-
-CGFloat addFloatField(UIView *parent, CGFloat y, NSString *label, float value, NSString *key) {
-    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
-    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
-    container.layer.cornerRadius = 6;
-    [parent addSubview:container];
-    
-    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 140, 30)];
-    nameLabel.text = label;
-    nameLabel.font = [UIFont systemFontOfSize:13];
-    nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
-    [container addSubview:nameLabel];
-    
-    UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(155, 5, 100, 30)];
-    field.text = [NSString stringWithFormat:@"%.2f", value];
-    field.textColor = [UIColor whiteColor];
-    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-    field.layer.cornerRadius = 4;
-    field.font = [UIFont systemFontOfSize:13];
-    field.keyboardType = UIKeyboardTypeDecimalPad;
-    field.textAlignment = NSTextAlignmentCenter;
-    field.tag = 100;
-    [container addSubview:field];
-    
-    UIButton *setBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    setBtn.frame = CGRectMake(260, 5, 50, 30);
-    setBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
-    setBtn.layer.cornerRadius = 4;
-    [setBtn setTitle:@"Set" forState:UIControlStateNormal];
-    [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:container action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
-    [container addSubview:setBtn];
-    
-    return y + 45;
-}
-
-CGFloat addIntField(UIView *parent, CGFloat y, NSString *label, int value, NSString *key) {
-    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
-    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
-    container.layer.cornerRadius = 6;
-    [parent addSubview:container];
-    
-    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 140, 30)];
-    nameLabel.text = label;
-    nameLabel.font = [UIFont systemFontOfSize:13];
-    nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
-    [container addSubview:nameLabel];
-    
-    UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(155, 5, 100, 30)];
-    field.text = [NSString stringWithFormat:@"%d", value];
-    field.textColor = [UIColor whiteColor];
-    field.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.8];
-    field.layer.cornerRadius = 4;
-    field.font = [UIFont systemFontOfSize:13];
-    field.keyboardType = UIKeyboardTypeNumberPad;
-    field.textAlignment = NSTextAlignmentCenter;
-    field.tag = 101;
-    [container addSubview:field];
-    
-    UIButton *setBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    setBtn.frame = CGRectMake(260, 5, 50, 30);
-    setBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
-    setBtn.layer.cornerRadius = 4;
-    [setBtn setTitle:@"Set" forState:UIControlStateNormal];
-    [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:container action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
-    [container addSubview:setBtn];
-    
-    return y + 45;
-}
-
-CGFloat addToggleWithLabel(UIView *parent, CGFloat y, NSString *label, BOOL value, NSString *key) {
-    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, y, 320, 40)];
-    container.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
-    container.layer.cornerRadius = 6;
-    [parent addSubview:container];
-    
-    UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 5, 220, 30)];
-    nameLabel.text = label;
-    nameLabel.font = [UIFont systemFontOfSize:13];
-    nameLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1];
-    [container addSubview:nameLabel];
-    
-    UISwitch *toggle = [[UISwitch alloc] initWithFrame:CGRectMake(250, 5, 50, 30)];
-    toggle.on = value;
-    toggle.onTintColor = [UIColor whiteColor];
-    toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
-    toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
-    toggle.tag = 200;
-    [toggle addTarget:container action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
-    [container addSubview:toggle];
-    
-    return y + 45;
-}
-
-void setFloatValue(id sender) {
-    UIButton *btn = (UIButton *)sender;
-    UIView *container = btn.superview;
-    UITextField *field = nil;
-    for (UIView *subview in container.subviews) {
-        if ([subview isKindOfClass:[UITextField class]]) {
-            field = (UITextField *)subview;
-            break;
-        }
-    }
-    if (!field) return;
-    
-    float value = [field.text floatValue];
-    
-    UILabel *label = nil;
-    for (UIView *subview in container.subviews) {
-        if ([subview isKindOfClass:[UILabel class]]) {
-            label = (UILabel *)subview;
-            break;
-        }
-    }
-    
-    NSString *labelText = label ? label.text : @"";
-    if ([labelText containsString:@"Jump"]) {
-        g_settings.jumpHeight = value;
-    } else if ([labelText containsString:@"Air"]) {
-        g_settings.airJumpHeight = value;
-    } else if ([labelText containsString:@"Speed"]) {
-        g_settings.speed = value;
-    } else if ([labelText containsString:@"Gravity"]) {
-        g_settings.gravity = value;
-    } else if ([labelText containsString:@"Roll"]) {
-        g_settings.rollDuration = value;
-    } else if ([labelText containsString:@"Surface"]) {
-        g_settings.surfaceMaxUpwardsSpeed = value;
-    } else if ([labelText containsString:@"Wall"]) {
-        g_settings.wallClimbSpeed = value;
-    } else if ([labelText containsString:@"Boost"]) {
-        g_settings.speedBoostMax = value;
-    }
-    
-    showFeedback([NSString stringWithFormat:@"Set to %.2f", value]);
-}
-
-void setIntValue(id sender) {
-    UIButton *btn = (UIButton *)sender;
-    UIView *container = btn.superview;
-    UITextField *field = nil;
-    for (UIView *subview in container.subviews) {
-        if ([subview isKindOfClass:[UITextField class]]) {
-            field = (UITextField *)subview;
-            break;
-        }
-    }
-    if (!field) return;
-    
-    int value = [field.text intValue];
-    g_settings.routeSeed = value;
-    showFeedback([NSString stringWithFormat:@"Seed set to %d", value]);
-}
-
-void toggleChanged(UISwitch *sender) {
-    UIView *container = sender.superview;
-    UILabel *label = nil;
-    for (UIView *subview in container.subviews) {
-        if ([subview isKindOfClass:[UILabel class]]) {
-            label = (UILabel *)subview;
-            break;
-        }
-    }
-    
-    NSString *labelText = label ? label.text : @"";
-    BOOL value = sender.isOn;
-    
-    if ([labelText containsString:@"Godmode"]) g_settings.godmode = value;
-    else if ([labelText containsString:@"Stick"]) g_settings.stickToGround = value;
-    else if ([labelText containsString:@"Wall Climb Enabled"]) g_settings.wallClimbEnabled = value;
-    else if ([labelText containsString:@"Seed Override"]) g_settings.seedOverride = value;
-    else if ([labelText containsString:@"No Coin"]) g_settings.noCoinPickup = value;
-    
-    showFeedback(value ? @"Enabled" : @"Disabled");
-}
-
-void applyAllSettings() {
-    apply_modifications();
-    showFeedback(@"All settings applied!");
-}
-
-void showFeedback(NSString *message) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *window = menuWindow;
-        if (!window) return;
-        
-        UILabel *feedback = [[UILabel alloc] initWithFrame:CGRectMake(10, 480, 320, 20)];
-        feedback.text = message;
-        feedback.font = [UIFont systemFontOfSize:12];
-        feedback.textColor = [UIColor colorWithWhite:0.6 alpha:1];
-        feedback.textAlignment = NSTextAlignmentCenter;
-        feedback.tag = 999;
-        
-        for (UIView *view in window.subviews) {
-            if (view.tag == 999) [view removeFromSuperview];
-        }
-        
-        [window addSubview:feedback];
-        
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [feedback removeFromSuperview];
-        });
-    });
-}
-
-void createMenuUI() {
-    UIWindow *window = [UIApplication sharedApplication].keyWindow;
-    if (!window) return;
-    
-    menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 60, 340, 520)];
-    menuWindow.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.97];
-    menuWindow.layer.cornerRadius = 16;
-    menuWindow.layer.borderColor = [UIColor colorWithWhite:0.3 alpha:1].CGColor;
-    menuWindow.layer.borderWidth = 0.5;
-    menuWindow.hidden = YES;
-    menuWindow.windowLevel = UIWindowLevelAlert + 1;
-    menuWindow.userInteractionEnabled = YES;
-    
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 50)];
-    header.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
-    [menuWindow addSubview:header];
-    
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 30)];
-    title.text = @"Frezon Mod v0.1";
-    title.font = [UIFont boldSystemFontOfSize:18];
-    title.textColor = [UIColor whiteColor];
-    [header addSubview:title];
-    
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(300, 10, 30, 30);
-    [closeBtn setTitle:@"X" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
-    [closeBtn addTarget:menuWindow action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
-    [header addSubview:closeBtn];
-    
-    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 50, 340, 470)];
-    scrollView.backgroundColor = [UIColor clearColor];
-    scrollView.showsVerticalScrollIndicator = YES;
-    scrollView.userInteractionEnabled = YES;
-    scrollView.scrollEnabled = YES;
-    [menuWindow addSubview:scrollView];
-    
-    UIView *contentView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 10)];
-    contentView.backgroundColor = [UIColor clearColor];
-    contentView.userInteractionEnabled = YES;
-    [scrollView addSubview:contentView];
-    
-    CGFloat yOffset = 10;
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Godmode");
-    yOffset = addToggleWithLabel(contentView, yOffset, @"Godmode", g_settings.godmode, @"godmode_toggle");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Player Physics");
-    yOffset = addFloatField(contentView, yOffset, @"Jump Height", g_settings.jumpHeight, @"jump_height");
-    yOffset = addFloatField(contentView, yOffset, @"Air Jump Height", g_settings.airJumpHeight, @"air_jump");
-    yOffset = addFloatField(contentView, yOffset, @"Speed", g_settings.speed, @"speed");
-    yOffset = addFloatField(contentView, yOffset, @"Gravity", g_settings.gravity, @"gravity");
-    yOffset = addFloatField(contentView, yOffset, @"Roll Duration", g_settings.rollDuration, @"roll_duration");
-    yOffset = addFloatField(contentView, yOffset, @"Surface Max Speed", g_settings.surfaceMaxUpwardsSpeed, @"surface_speed");
-    yOffset = addToggleWithLabel(contentView, yOffset, @"Stick to Ground", g_settings.stickToGround, @"stick_toggle");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Wall Climb");
-    yOffset = addToggleWithLabel(contentView, yOffset, @"Wall Climb Enabled", g_settings.wallClimbEnabled, @"wall_toggle");
-    yOffset = addFloatField(contentView, yOffset, @"Wall Climb Speed", g_settings.wallClimbSpeed, @"wall_speed");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Speed Boost");
-    yOffset = addFloatField(contentView, yOffset, @"Speed Boost Max", g_settings.speedBoostMax, @"boost_max");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Route Seed");
-    yOffset = addToggleWithLabel(contentView, yOffset, @"Seed Override", g_settings.seedOverride, @"seed_toggle");
-    yOffset = addIntField(contentView, yOffset, @"Route Seed", g_settings.routeSeed, @"route_seed");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    yOffset = addSectionHeader(contentView, yOffset, @"Coin Pickup");
-    yOffset = addToggleWithLabel(contentView, yOffset, @"No Coin Pickup", g_settings.noCoinPickup, @"coin_toggle");
-    yOffset = addSeparator(contentView, yOffset);
-    
-    UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    applyBtn.frame = CGRectMake(20, yOffset + 10, 300, 44);
-    applyBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
-    applyBtn.layer.cornerRadius = 10;
-    [applyBtn setTitle:@"Apply All Settings" forState:UIControlStateNormal];
-    [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    applyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [applyBtn addTarget:contentView action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
-    [contentView addSubview:applyBtn];
-    yOffset += 60;
-    
-    CGRect frame = contentView.frame;
-    frame.size.height = yOffset + 20;
-    contentView.frame = frame;
-    scrollView.contentSize = CGSizeMake(340, frame.size.height);
-    
-    [menuWindow makeKeyAndVisible];
-}
-
 void toggleMenu() {
     if (!menuWindow) {
-        createMenuUI();
+        menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 60, 300, 400)];
+        menuWindow.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.95];
+        menuWindow.layer.cornerRadius = 16;
+        menuWindow.hidden = YES;
+        menuWindow.windowLevel = UIWindowLevelAlert + 1;
+        
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 280, 30)];
+        title.text = @"Frezon Mod v0.1";
+        title.textColor = [UIColor whiteColor];
+        title.textAlignment = NSTextAlignmentCenter;
+        title.font = [UIFont boldSystemFontOfSize:18];
+        [menuWindow addSubview:title];
+        
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(260, 10, 30, 30);
+        [closeBtn setTitle:@"X" forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
+        [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
+        [menuWindow addSubview:closeBtn];
+        
+        UIButton *godmodeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        godmodeBtn.frame = CGRectMake(20, 60, 260, 40);
+        godmodeBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+        godmodeBtn.layer.cornerRadius = 8;
+        [godmodeBtn setTitle:@"Godmode" forState:UIControlStateNormal];
+        [godmodeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [godmodeBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [menuWindow addSubview:godmodeBtn];
+        
+        UIButton *jumpBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        jumpBtn.frame = CGRectMake(20, 110, 260, 40);
+        jumpBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+        jumpBtn.layer.cornerRadius = 8;
+        [jumpBtn setTitle:@"Jump Height = 50" forState:UIControlStateNormal];
+        [jumpBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [jumpBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [menuWindow addSubview:jumpBtn];
+        
+        UIButton *speedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        speedBtn.frame = CGRectMake(20, 160, 260, 40);
+        speedBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+        speedBtn.layer.cornerRadius = 8;
+        [speedBtn setTitle:@"Speed = 200" forState:UIControlStateNormal];
+        [speedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [speedBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [menuWindow addSubview:speedBtn];
+        
+        UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        applyBtn.frame = CGRectMake(20, 320, 260, 44);
+        applyBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
+        applyBtn.layer.cornerRadius = 10;
+        [applyBtn setTitle:@"Apply All" forState:UIControlStateNormal];
+        [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [applyBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [menuWindow addSubview:applyBtn];
     }
+    
     isMenuVisible = !isMenuVisible;
     menuWindow.hidden = !isMenuVisible;
     if (!menuWindow.hidden) {
@@ -604,9 +240,11 @@ void closeMenu() {
     menuWindow.hidden = YES;
 }
 
-// ============================================================
-// ===== 7. نقطة الدخول =====
-// ============================================================
+void applyMods() {
+    apply_modifications();
+}
+
+// ===== 6. نقطة الدخول =====
 __attribute__((constructor))
 static void frezonmod_entry() {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -614,7 +252,6 @@ static void frezonmod_entry() {
         if (!window) return;
         
         loadUnityFramework();
-        init_il2cpp_functions();
         
         UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         menuBtn.frame = CGRectMake(20, 100, 60, 60);
