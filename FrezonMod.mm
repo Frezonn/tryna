@@ -139,7 +139,6 @@ static ModSettings g_settings = {
 };
 
 uintptr_t g_configAddress = 0;
-uintptr_t g_routeConfigAddress = 0;
 
 // ============================================================
 // ===== 5. دوال الذاكرة =====
@@ -263,6 +262,9 @@ void apply_modifications() {
 static UIWindow *menuWindow;
 static BOOL isMenuVisible = NO;
 
+// إعلان الدوال
+void showFeedback(NSString *message);
+
 CGFloat addSectionHeader(UIView *parent, CGFloat y, NSString *title) {
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(15, y, 300, 30)];
     label.text = title;
@@ -313,7 +315,7 @@ CGFloat addFloatField(UIView *parent, CGFloat y, NSString *label, float value, N
     [setBtn setTitle:@"Set" forState:UIControlStateNormal];
     [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:self action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
+    [setBtn addTarget:container action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
     [container addSubview:setBtn];
     
     return y + 45;
@@ -349,7 +351,7 @@ CGFloat addIntField(UIView *parent, CGFloat y, NSString *label, int value, NSStr
     [setBtn setTitle:@"Set" forState:UIControlStateNormal];
     [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:self action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
+    [setBtn addTarget:container action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
     [container addSubview:setBtn];
     
     return y + 45;
@@ -373,7 +375,7 @@ CGFloat addToggleWithLabel(UIView *parent, CGFloat y, NSString *label, BOOL valu
     toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
     toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
     toggle.tag = 200;
-    [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
+    [toggle addTarget:container action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
     [container addSubview:toggle];
     
     return y + 45;
@@ -518,7 +520,7 @@ void createMenuUI() {
     closeBtn.frame = CGRectMake(300, 10, 30, 30);
     [closeBtn setTitle:@"X" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
-    [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:menuWindow action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:closeBtn];
     
     UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 50, 340, 470)];
@@ -574,7 +576,7 @@ void createMenuUI() {
     [applyBtn setTitle:@"Apply All Settings" forState:UIControlStateNormal];
     [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     applyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [applyBtn addTarget:self action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
+    [applyBtn addTarget:contentView action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
     [contentView addSubview:applyBtn];
     yOffset += 60;
     
