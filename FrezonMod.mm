@@ -8,32 +8,36 @@
 // ===== 1. تحميل UnityFramework =====
 // ============================================================
 static void *unityFrameworkHandle = NULL;
+static dispatch_once_t unityLoadOnce;
 
 void loadUnityFramework() {
-    const char *paths[] = {
-        "Subwaysurf.app/Frameworks/UnityFramework.framework/UnityFramework",
-        "Frameworks/UnityFramework.framework/UnityFramework",
-        "/System/Library/Frameworks/UnityFramework.framework/UnityFramework",
-        "UnityFramework"
-    };
-    
-    for (int i = 0; i < 4; i++) {
-        unityFrameworkHandle = dlopen(paths[i], RTLD_LAZY);
-        if (unityFrameworkHandle) {
-            NSLog(@"UnityFramework loaded from: %s", paths[i]);
-            return;
+    dispatch_once(&unityLoadOnce, ^{
+        const char *paths[] = {
+            "Subwaysurf.app/Frameworks/UnityFramework.framework/UnityFramework",
+            "Frameworks/UnityFramework.framework/UnityFramework",
+            "/System/Library/Frameworks/UnityFramework.framework/UnityFramework",
+            "UnityFramework"
+        };
+        
+        int pathCount = sizeof(paths) / sizeof(paths[0]);
+        for (int i = 0; i < pathCount; i++) {
+            unityFrameworkHandle = dlopen(paths[i], RTLD_LAZY);
+            if (unityFrameworkHandle) {
+                NSLog(@"UnityFramework loaded from: %s", paths[i]);
+                return;
+            }
         }
-    }
-    
-    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-    NSString *frameworkPath = [bundlePath stringByAppendingPathComponent:@"Frameworks/UnityFramework.framework/UnityFramework"];
-    unityFrameworkHandle = dlopen([frameworkPath UTF8String], RTLD_LAZY);
-    
-    if (unityFrameworkHandle) {
-        NSLog(@"UnityFramework loaded from bundle path: %@", frameworkPath);
-    } else {
-        NSLog(@"Failed to load UnityFramework");
-    }
+        
+        NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+        NSString *frameworkPath = [bundlePath stringByAppendingPathComponent:@"Frameworks/UnityFramework.framework/UnityFramework"];
+        unityFrameworkHandle = dlopen([frameworkPath UTF8String], RTLD_LAZY);
+        
+        if (unityFrameworkHandle) {
+            NSLog(@"UnityFramework loaded from bundle path: %@", frameworkPath);
+        } else {
+            NSLog(@"Failed to load UnityFramework: %s", dlerror());
+        }
+    });
 }
 
 // ============================================================
@@ -42,27 +46,46 @@ void loadUnityFramework() {
 typedef void *(*il2cpp_class_from_name_t)(void *image, const char *namespaze, const char *name);
 typedef void *(*il2cpp_assembly_get_image_t)(void *assembly);
 typedef void *(*il2cpp_domain_get_assemblies_t)(void *domain, size_t *size);
+typedef void *(*il2cpp_domain_get_t)(void);
 
 static il2cpp_class_from_name_t il2cpp_class_from_name = NULL;
 static il2cpp_assembly_get_image_t il2cpp_assembly_get_image = NULL;
 static il2cpp_domain_get_assemblies_t il2cpp_domain_get_assemblies = NULL;
+static il2cpp_domain_get_t il2cpp_domain_get = NULL;
 
 void init_il2cpp_functions() {
-    if (!unityFrameworkHandle) return;
+    if (!unityFrameworkHandle) {
+        NSLog(@"UnityFramework not loaded");
+        return;
+    }
     
     il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(unityFrameworkHandle, "il2cpp_class_from_name");
     il2cpp_assembly_get_image = (il2cpp_assembly_get_image_t)dlsym(unityFrameworkHandle, "il2cpp_assembly_get_image");
     il2cpp_domain_get_assemblies = (il2cpp_domain_get_assemblies_t)dlsym(unityFrameworkHandle, "il2cpp_domain_get_assemblies");
+    il2cpp_domain_get = (il2cpp_domain_get_t)dlsym(unityFrameworkHandle, "il2cpp_domain_get");
+    
+    if (!il2cpp_class_from_name || !il2cpp_assembly_get_image || !il2cpp_domain_get_assemblies) {
+        NSLog(@"Failed to load IL2CPP functions");
+    }
 }
 
 void *find_class_in_il2cpp(const char *namespaze, const char *name) {
-    if (!il2cpp_class_from_name) return NULL;
+    if (!il2cpp_class_from_name || !il2cpp_domain_get_assemblies || !il2cpp_domain_get) {
+        NSLog(@"IL2CPP functions not initialized");
+        return NULL;
+    }
     
     size_t assembly_count = 0;
-    void **assemblies = il2cpp_domain_get_assemblies(NULL, &assembly_count);
+    void *domain = il2cpp_domain_get();
+    if (!domain) return NULL;
+    
+    void **assemblies = il2cpp_domain_get_assemblies(domain, &assembly_count);
+    if (!assemblies) return NULL;
     
     for (size_t i = 0; i < assembly_count; i++) {
         void *image = il2cpp_assembly_get_image(assemblies[i]);
+        if (!image) continue;
+        
         void *klass = il2cpp_class_from_name(image, namespaze, name);
         if (klass) return klass;
     }
@@ -155,8 +178,39 @@ static ModSettings g_settings = {
 // ============================================================
 // ===== 5. دوال تعديل الذاكرة =====
 // ============================================================
-uintptr_t g_configAddress = 0;
-uintptr_t g_routeConfigAddress = 0;
+static uintptr_t g_configAddress = 0;
+static uintptr_t g_routeConfigAddress = 0;
+static dispatch_once_t addressFindOnce;
+
+void safe_write_float(mach_port_t task, uintptr_t addr, float value) {
+    kern_return_t kr = vm_protect(task, (vm_address_t)addr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    if (kr != KERN_SUCCESS) {
+        NSLog(@"Failed to protect memory at 0x%llx: %d", addr, kr);
+        return;
+    }
+    *(float *)addr = value;
+    vm_protect(task, (vm_address_t)addr, sizeof(float), 0, VM_PROT_READ);
+}
+
+void safe_write_bool(mach_port_t task, uintptr_t addr, bool value) {
+    kern_return_t kr = vm_protect(task, (vm_address_t)addr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
+    if (kr != KERN_SUCCESS) {
+        NSLog(@"Failed to protect memory at 0x%llx: %d", addr, kr);
+        return;
+    }
+    *(bool *)addr = value;
+    vm_protect(task, (vm_address_t)addr, sizeof(bool), 0, VM_PROT_READ);
+}
+
+void safe_write_int(mach_port_t task, uintptr_t addr, int value) {
+    kern_return_t kr = vm_protect(task, (vm_address_t)addr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
+    if (kr != KERN_SUCCESS) {
+        NSLog(@"Failed to protect memory at 0x%llx: %d", addr, kr);
+        return;
+    }
+    *(int *)addr = value;
+    vm_protect(task, (vm_address_t)addr, sizeof(int), 0, VM_PROT_READ);
+}
 
 void find_motor_config_address() {
     if (g_configAddress != 0) return;
@@ -168,33 +222,46 @@ void find_motor_config_address() {
     
     for (vm_address_t addr = startAddress; addr < startAddress + searchSize; addr += 4) {
         float value = 0;
-        vm_read_overwrite(task, addr, sizeof(float), (vm_address_t)&value, NULL);
+        kern_return_t kr = vm_read_overwrite(task, addr, sizeof(float), (vm_address_t)&value, NULL);
+        if (kr != KERN_SUCCESS) continue;
+        
         if (value == targetValue) {
             float gravity = 0;
-            vm_read_overwrite(task, addr - OFFSET_JUMP_HEIGHT + OFFSET_GRAVITY, sizeof(float), (vm_address_t)&gravity, NULL);
-            if (gravity == -200.0f || gravity == -150.0f) {
+            kr = vm_read_overwrite(task, addr - OFFSET_JUMP_HEIGHT + OFFSET_GRAVITY, sizeof(float), (vm_address_t)&gravity, NULL);
+            if (kr == KERN_SUCCESS && (gravity == -200.0f || gravity == -150.0f)) {
                 g_configAddress = addr - OFFSET_JUMP_HEIGHT;
                 NSLog(@"MotorConfig found at: 0x%llx", g_configAddress);
                 return;
             }
         }
     }
+    NSLog(@"MotorConfig not found in memory range");
 }
 
 void find_route_config_address() {
     if (g_routeConfigAddress != 0) return;
     
     Class routeConfigClass = objc_getClass("SYBO.Subway.RouteConfig");
-    if (routeConfigClass) {
-        Ivar seedIvar = class_getInstanceVariable(routeConfigClass, "_forceSeed");
-        if (seedIvar) {
-            id instance = [routeConfigClass performSelector:@selector(instance)];
-            if (instance) {
-                g_routeConfigAddress = (uintptr_t)instance;
-                NSLog(@"RouteConfig found at: 0x%llx", g_routeConfigAddress);
-                return;
-            }
-        }
+    if (!routeConfigClass) {
+        NSLog(@"RouteConfig class not found");
+        return;
+    }
+    
+    if (!class_getInstanceVariable(routeConfigClass, "_forceSeed")) {
+        NSLog(@"_forceSeed ivar not found");
+        return;
+    }
+    
+    SEL instanceSelector = @selector(instance);
+    if (!class_getClassMethod(routeConfigClass, instanceSelector)) {
+        NSLog(@"instance method not found");
+        return;
+    }
+    
+    id instance = [routeConfigClass performSelector:instanceSelector];
+    if (instance) {
+        g_routeConfigAddress = (uintptr_t)instance;
+        NSLog(@"RouteConfig found at: 0x%llx", g_routeConfigAddress);
     }
 }
 
@@ -214,117 +281,63 @@ void apply_modifications() {
         float huge = 1000.0f;
         float tiny = 0.01f;
         
-        uintptr_t knockbackDur = g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION;
-        uintptr_t knockbackDist = g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE;
-        vm_protect(task, (vm_address_t)knockbackDur, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)knockbackDist, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)knockbackDur = zero;
-        *(float *)knockbackDist = zero;
-        
-        uintptr_t lowerMax = g_configAddress + OFFSET_LOWER_IMPACT_MAX_HEIGHT;
-        uintptr_t upperMin = g_configAddress + OFFSET_UPPER_IMPACT_MIN_HEIGHT;
-        vm_protect(task, (vm_address_t)lowerMax, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)upperMin, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)lowerMax = huge;
-        *(float *)upperMin = -huge;
-        
-        uintptr_t frontalTimeout = g_configAddress + OFFSET_FRONTAL_IMPACT_TIMEOUT;
-        vm_protect(task, (vm_address_t)frontalTimeout, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)frontalTimeout = zero;
-        
-        uintptr_t colliderHeight = g_configAddress + OFFSET_COLLIDER_HEIGHT;
-        vm_protect(task, (vm_address_t)colliderHeight, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)colliderHeight = tiny;
-        
-        uintptr_t lowerRatio = g_configAddress + OFFSET_LOWER_IMPACT_HEIGHT_RATIO;
-        vm_protect(task, (vm_address_t)lowerRatio, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)lowerRatio = zero;
-        
-        uintptr_t cornerMin = g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN;
-        uintptr_t cornerMax = g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX;
-        uintptr_t cornerWidth = g_configAddress + OFFSET_CORNER_IMPACT_REGION_WIDTH;
-        vm_protect(task, (vm_address_t)cornerMin, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)cornerMax, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)cornerWidth, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)cornerMin = zero;
-        *(float *)cornerMax = zero;
-        *(float *)cornerWidth = zero;
+        safe_write_float(task, g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DURATION, zero);
+        safe_write_float(task, g_configAddress + OFFSET_FRONTAL_IMPACT_KNOCKBACK_DISTANCE, zero);
+        safe_write_float(task, g_configAddress + OFFSET_LOWER_IMPACT_MAX_HEIGHT, huge);
+        safe_write_float(task, g_configAddress + OFFSET_UPPER_IMPACT_MIN_HEIGHT, -huge);
+        safe_write_float(task, g_configAddress + OFFSET_FRONTAL_IMPACT_TIMEOUT, zero);
+        safe_write_float(task, g_configAddress + OFFSET_COLLIDER_HEIGHT, tiny);
+        safe_write_float(task, g_configAddress + OFFSET_LOWER_IMPACT_HEIGHT_RATIO, zero);
+        safe_write_float(task, g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MIN, zero);
+        safe_write_float(task, g_configAddress + OFFSET_CORNER_IMPACT_REGION_DEPTH_MAX, zero);
+        safe_write_float(task, g_configAddress + OFFSET_CORNER_IMPACT_REGION_WIDTH, zero);
         
         NSLog(@"Godmode activated");
     }
     
     // ===== القسم 2: تعديل القفز =====
-    uintptr_t jumpAddr = g_configAddress + OFFSET_JUMP_HEIGHT;
-    uintptr_t airJumpAddr = g_configAddress + OFFSET_AIR_JUMP_HEIGHT;
-    vm_protect(task, (vm_address_t)jumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    vm_protect(task, (vm_address_t)airJumpAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)jumpAddr = g_settings.jumpHeight;
-    *(float *)airJumpAddr = g_settings.airJumpHeight;
+    safe_write_float(task, g_configAddress + OFFSET_JUMP_HEIGHT, g_settings.jumpHeight);
+    safe_write_float(task, g_configAddress + OFFSET_AIR_JUMP_HEIGHT, g_settings.airJumpHeight);
     NSLog(@"Jump Height: %.2f", g_settings.jumpHeight);
     
     // ===== القسم 3: تعديل السرعة =====
-    uintptr_t initSpeed = g_configAddress + OFFSET_INITIAL_TARGET_SPEED;
-    uintptr_t finalSpeed = g_configAddress + OFFSET_FINAL_TARGET_SPEED;
-    vm_protect(task, (vm_address_t)initSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    vm_protect(task, (vm_address_t)finalSpeed, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)initSpeed = g_settings.speed;
-    *(float *)finalSpeed = g_settings.speed;
+    safe_write_float(task, g_configAddress + OFFSET_INITIAL_TARGET_SPEED, g_settings.speed);
+    safe_write_float(task, g_configAddress + OFFSET_FINAL_TARGET_SPEED, g_settings.speed);
     NSLog(@"Speed: %.2f", g_settings.speed);
     
     // ===== القسم 4: تعديل الجاذبية =====
-    uintptr_t gravityAddr = g_configAddress + OFFSET_GRAVITY;
-    vm_protect(task, (vm_address_t)gravityAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)gravityAddr = g_settings.gravity;
+    safe_write_float(task, g_configAddress + OFFSET_GRAVITY, g_settings.gravity);
     NSLog(@"Gravity: %.2f", g_settings.gravity);
     
     // ===== القسم 5: تعديل الـ Roll =====
-    uintptr_t rollAddr = g_configAddress + OFFSET_ROLL_DURATION;
-    vm_protect(task, (vm_address_t)rollAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)rollAddr = g_settings.rollDuration;
+    safe_write_float(task, g_configAddress + OFFSET_ROLL_DURATION, g_settings.rollDuration);
     NSLog(@"Roll Duration: %.2f", g_settings.rollDuration);
     
     // ===== القسم 6: تعديل الـ Wall Climb =====
-    uintptr_t wallClimbAddr = g_configAddress + OFFSET_WALL_CLIMB_ENABLED;
-    vm_protect(task, (vm_address_t)wallClimbAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)wallClimbAddr = g_settings.wallClimbEnabled;
-    
-    uintptr_t wallSpeedAddr = g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED;
-    vm_protect(task, (vm_address_t)wallSpeedAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)wallSpeedAddr = g_settings.wallClimbSpeed;
+    safe_write_bool(task, g_configAddress + OFFSET_WALL_CLIMB_ENABLED, g_settings.wallClimbEnabled);
+    safe_write_float(task, g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED, g_settings.wallClimbSpeed);
     NSLog(@"Wall Climb: %d, Speed: %.2f", g_settings.wallClimbEnabled, g_settings.wallClimbSpeed);
     
     // ===== القسم 7: الالتصاق بالأرض =====
-    uintptr_t stickAddr = g_configAddress + OFFSET_STICK_TO_GROUND;
-    vm_protect(task, (vm_address_t)stickAddr, sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)stickAddr = g_settings.stickToGround;
+    safe_write_bool(task, g_configAddress + OFFSET_STICK_TO_GROUND, g_settings.stickToGround);
     NSLog(@"Stick to Ground: %d", g_settings.stickToGround);
     
     // ===== القسم 8: تعديل الـ Dive =====
-    uintptr_t diveAddr = g_configAddress + OFFSET_JUMP_DIVE_VELOCITY_Y;
-    vm_protect(task, (vm_address_t)diveAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)diveAddr = g_settings.diveVelocity;
+    safe_write_float(task, g_configAddress + OFFSET_JUMP_DIVE_VELOCITY_Y, g_settings.diveVelocity);
     NSLog(@"Dive Velocity: %.2f", g_settings.diveVelocity);
     
     // ===== القسم 9: Surface Max Upwards Speed =====
-    uintptr_t surfaceAddr = g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED;
-    vm_protect(task, (vm_address_t)surfaceAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)surfaceAddr = g_settings.surfaceMaxUpwardsSpeed;
+    safe_write_float(task, g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED, g_settings.surfaceMaxUpwardsSpeed);
     NSLog(@"Surface Max Upwards Speed: %.2f", g_settings.surfaceMaxUpwardsSpeed);
     
     // ===== القسم 10: Speed Boost =====
-    uintptr_t boostAddr = g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED;
-    vm_protect(task, (vm_address_t)boostAddr, sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)boostAddr = g_settings.speedBoostMax;
+    safe_write_float(task, g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED, g_settings.speedBoostMax);
     NSLog(@"Speed Boost Max: %.2f", g_settings.speedBoostMax);
     
     // ===== القسم 11: Route Seed (Override) =====
     if (g_routeConfigAddress != 0 && g_settings.seedOverride) {
-        uintptr_t seedAddr = g_routeConfigAddress + OFFSET_ROUTE_SEED;
-        uintptr_t forceSeedAddr = g_routeConfigAddress + OFFSET_ROUTE_FORCE_SEED;
-        vm_protect(task, (vm_address_t)seedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
-        vm_protect(task, (vm_address_t)forceSeedAddr, sizeof(int), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(int *)seedAddr = g_settings.routeSeed;
-        *(int *)forceSeedAddr = 1;
+        safe_write_int(task, g_routeConfigAddress + OFFSET_ROUTE_SEED, g_settings.routeSeed);
+        safe_write_int(task, g_routeConfigAddress + OFFSET_ROUTE_FORCE_SEED, 1);
         NSLog(@"Route Seed: %d", g_settings.routeSeed);
     }
 }
@@ -337,6 +350,7 @@ static BOOL isMenuVisible = NO;
 static UIScrollView *scrollView;
 static UIView *contentView;
 static NSMutableDictionary *inputFields;
+static FrezonModViewController *gViewController;
 
 @interface FrezonModViewController : UIViewController
 @end
@@ -363,8 +377,8 @@ void createMenuUI() {
     menuWindow.windowLevel = UIWindowLevelAlert + 1;
     menuWindow.userInteractionEnabled = YES;
     
-    FrezonModViewController *vc = [[FrezonModViewController alloc] init];
-    menuWindow.rootViewController = vc;
+    gViewController = [[FrezonModViewController alloc] init];
+    menuWindow.rootViewController = gViewController;
     
     // ===== الهيدر =====
     UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 340, 50)];
@@ -372,7 +386,7 @@ void createMenuUI() {
     [menuWindow addSubview:header];
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 30)];
-    title.text = @"Frezon Mod v0.1";
+    title.text = @"Frezon Mod v0.2";
     title.font = [UIFont boldSystemFontOfSize:18];
     title.textColor = [UIColor whiteColor];
     [header addSubview:title];
@@ -381,7 +395,7 @@ void createMenuUI() {
     closeBtn.frame = CGRectMake(300, 10, 30, 30);
     [closeBtn setTitle:@"X" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
-    [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:gViewController action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [header addSubview:closeBtn];
     
     // ===== ScrollView =====
@@ -402,16 +416,10 @@ void createMenuUI() {
     
     CGFloat yOffset = 10;
     
-    // ============================================================
-    // ===== القسم 1: Godmode =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Godmode");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Godmode", g_settings.godmode, @"godmode_toggle");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ============================================================
-    // ===== القسم 2: Player Physics =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Player Physics");
     yOffset = addFloatField(contentView, yOffset, @"Jump Height", g_settings.jumpHeight, @"jump_height");
     yOffset = addFloatField(contentView, yOffset, @"Air Jump Height", g_settings.airJumpHeight, @"air_jump");
@@ -423,32 +431,20 @@ void createMenuUI() {
     yOffset = addToggleWithLabel(contentView, yOffset, @"Stick to Ground", g_settings.stickToGround, @"stick_toggle");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ============================================================
-    // ===== القسم 3: Wall Climb =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Wall Climb");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Wall Climb Enabled", g_settings.wallClimbEnabled, @"wall_toggle");
     yOffset = addFloatField(contentView, yOffset, @"Wall Climb Speed", g_settings.wallClimbSpeed, @"wall_speed");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ============================================================
-    // ===== القسم 4: Speed Boost =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Speed Boost");
     yOffset = addFloatField(contentView, yOffset, @"Speed Boost Max", g_settings.speedBoostMax, @"boost_max");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ============================================================
-    // ===== القسم 5: Route Seed =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Route Seed Override");
     yOffset = addToggleWithLabel(contentView, yOffset, @"Seed Override", g_settings.seedOverride, @"seed_toggle");
     yOffset = addIntField(contentView, yOffset, @"Route Seed", g_settings.routeSeed, @"route_seed");
     yOffset = addSeparator(contentView, yOffset);
     
-    // ============================================================
-    // ===== القسم 6: Coin Pickup =====
-    // ============================================================
     yOffset = addSectionHeader(contentView, yOffset, @"Coin Pickup");
     yOffset = addToggleWithLabel(contentView, yOffset, @"No Coin Pickup", g_settings.noCoinPickup, @"coin_toggle");
     yOffset = addSeparator(contentView, yOffset);
@@ -461,11 +457,10 @@ void createMenuUI() {
     [applyBtn setTitle:@"Apply All Settings" forState:UIControlStateNormal];
     [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     applyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [applyBtn addTarget:self action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
+    [applyBtn addTarget:gViewController action:@selector(applyAllSettings) forControlEvents:UIControlEventTouchUpInside];
     [contentView addSubview:applyBtn];
     yOffset += 60;
     
-    // تحديث حجم المحتوى
     CGRect frame = contentView.frame;
     frame.size.height = yOffset + 20;
     contentView.frame = frame;
@@ -525,7 +520,7 @@ CGFloat addFloatField(UIView *parent, CGFloat y, NSString *label, float value, N
     [setBtn setTitle:@"Set" forState:UIControlStateNormal];
     [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:self action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
+    [setBtn addTarget:gViewController action:@selector(setFloatValue:) forControlEvents:UIControlEventTouchUpInside];
     [container addSubview:setBtn];
     
     inputFields[key] = @{@"field": field, @"container": container};
@@ -562,7 +557,7 @@ CGFloat addIntField(UIView *parent, CGFloat y, NSString *label, int value, NSStr
     [setBtn setTitle:@"Set" forState:UIControlStateNormal];
     [setBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     setBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [setBtn addTarget:self action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
+    [setBtn addTarget:gViewController action:@selector(setIntValue:) forControlEvents:UIControlEventTouchUpInside];
     [container addSubview:setBtn];
     
     inputFields[key] = @{@"field": field, @"container": container};
@@ -587,7 +582,7 @@ CGFloat addToggleWithLabel(UIView *parent, CGFloat y, NSString *label, BOOL valu
     toggle.tintColor = [UIColor colorWithWhite:0.3 alpha:1];
     toggle.thumbTintColor = [UIColor colorWithWhite:0.1 alpha:1];
     toggle.tag = 200;
-    [toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
+    [toggle addTarget:gViewController action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
     [container addSubview:toggle];
     
     inputFields[key] = @{@"toggle": toggle, @"container": container};
@@ -606,12 +601,28 @@ void toggleMenu() {
     }
 }
 
-void closeMenu() {
+@interface FrezonModViewController (Actions)
+- (void)toggleMenu;
+- (void)closeMenu;
+- (void)setFloatValue:(id)sender;
+- (void)setIntValue:(id)sender;
+- (void)toggleChanged:(UISwitch *)sender;
+- (void)applyAllSettings;
+- (void)showFeedback:(NSString *)message;
+@end
+
+@implementation FrezonModViewController (Actions)
+
+- (void)toggleMenu {
+    ::toggleMenu();
+}
+
+- (void)closeMenu {
     isMenuVisible = NO;
     menuWindow.hidden = YES;
 }
 
-void setFloatValue(id sender) {
+- (void)setFloatValue:(id)sender {
     UIButton *btn = (UIButton *)sender;
     UIView *container = btn.superview;
     UITextField *field = nil;
@@ -648,7 +659,7 @@ void setFloatValue(id sender) {
     [self showFeedback:[NSString stringWithFormat:@"Set to %.2f", value]];
 }
 
-void setIntValue(id sender) {
+- (void)setIntValue:(id)sender {
     UIButton *btn = (UIButton *)sender;
     UIView *container = btn.superview;
     UITextField *field = nil;
@@ -677,7 +688,7 @@ void setIntValue(id sender) {
     }
 }
 
-void toggleChanged(UISwitch *sender) {
+- (void)toggleChanged:(UISwitch *)sender {
     NSString *key = nil;
     for (NSString *k in inputFields.allKeys) {
         NSDictionary *data = inputFields[k];
@@ -699,13 +710,13 @@ void toggleChanged(UISwitch *sender) {
     [self showFeedback:value ? @"Enabled" : @"Disabled"];
 }
 
-void applyAllSettings() {
+- (void)applyAllSettings {
     NSLog(@"Applying all settings...");
     apply_modifications();
     [self showFeedback:@"All settings applied!"];
 }
 
-void showFeedback(NSString *message) {
+- (void)showFeedback:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = menuWindow;
         if (!window) return;
@@ -728,6 +739,8 @@ void showFeedback(NSString *message) {
         });
     });
 }
+
+@end
 
 // ============================================================
 // ===== 7. نقطة الدخول =====
@@ -752,7 +765,7 @@ static void frezonmod_entry() {
         [menuBtn setTitle:@"F" forState:UIControlStateNormal];
         [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         menuBtn.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-        [menuBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+        [menuBtn addTarget:gViewController action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
         [window addSubview:menuBtn];
         
         // البحث عن العناوين
