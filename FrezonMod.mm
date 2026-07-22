@@ -4,26 +4,9 @@
 #import <dlfcn.h>
 #import <mach/mach.h>
 
-// ===== 1. تحميل UnityFramework =====
-static void *unityFrameworkHandle = NULL;
-
-void loadUnityFramework() {
-    const char *paths[] = {
-        "Subwaysurf.app/Frameworks/UnityFramework.framework/UnityFramework",
-        "Frameworks/UnityFramework.framework/UnityFramework",
-        "UnityFramework"
-    };
-    
-    for (int i = 0; i < 3; i++) {
-        unityFrameworkHandle = dlopen(paths[i], RTLD_LAZY);
-        if (unityFrameworkHandle) {
-            NSLog(@"UnityFramework loaded from: %s", paths[i]);
-            return;
-        }
-    }
-}
-
-// ===== 2. Offsets =====
+// ============================================================
+// ===== Offsets =====
+// ============================================================
 #define OFFSET_JUMP_HEIGHT       0x4C
 #define OFFSET_GRAVITY           0x18
 #define OFFSET_INITIAL_TARGET_SPEED 0x24
@@ -36,36 +19,16 @@ void loadUnityFramework() {
 #define OFFSET_SPEED_BOOST_MAX_SPEED 0xAC
 #define OFFSET_SURFACE_MAX_UPWARDS_SPEED 0x8C
 
-// ===== 3. الإعدادات =====
-typedef struct {
-    float jumpHeight;
-    float speed;
-    float gravity;
-    float rollDuration;
-    float wallClimbSpeed;
-    float surfaceMaxUpwardsSpeed;
-    float speedBoostMax;
-    bool godmode;
-    bool stickToGround;
-    bool wallClimbEnabled;
-} ModSettings;
-
-static ModSettings g_settings = {
-    .jumpHeight = 50.0f,
-    .speed = 200.0f,
-    .gravity = -50.0f,
-    .rollDuration = 0.1f,
-    .wallClimbSpeed = 50.0f,
-    .surfaceMaxUpwardsSpeed = 200.0f,
-    .speedBoostMax = 300.0f,
-    .godmode = true,
-    .stickToGround = true,
-    .wallClimbEnabled = true
-};
-
+// ============================================================
+// ===== الإعدادات =====
+// ============================================================
 uintptr_t g_configAddress = 0;
+static UIWindow *menuWindow = nil;
+static BOOL isMenuVisible = NO;
 
-// ===== 4. دوال الذاكرة =====
+// ============================================================
+// ===== دوال الذاكرة =====
+// ============================================================
 void find_motor_config_address() {
     if (g_configAddress != 0) return;
     
@@ -99,133 +62,142 @@ void apply_modifications() {
     }
     
     // Godmode
-    if (g_settings.godmode) {
-        float zero = 0.0f, huge = 1000.0f, tiny = 0.01f;
-        
-        uintptr_t addrs[] = {
-            g_configAddress + 0x70, // FrontalImpactKnockbackDuration
-            g_configAddress + 0x74, // FrontalImpactKnockbackDistance
-            g_configAddress + 0x68, // LowerImpactMaxHeight
-            g_configAddress + 0x6C, // UpperImpactMinHeight
-            g_configAddress + 0x78, // FrontalImpactTimeout
-            g_configAddress + 0x7C, // LowerImpactHeightRatio
-            g_configAddress + 0x80, // CornerImpactRegionDepthMin
-            g_configAddress + 0x84, // CornerImpactRegionDepthMax
-            g_configAddress + 0x88  // CornerImpactRegionWidth
-        };
-        float values[] = {zero, zero, huge, -huge, zero, zero, zero, zero, zero};
-        
-        for (int i = 0; i < 9; i++) {
-            vm_protect(task, (vm_address_t)addrs[i], sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-            *(float *)addrs[i] = values[i];
-        }
-        
-        vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_COLLIDER_HEIGHT), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-        *(float *)(g_configAddress + OFFSET_COLLIDER_HEIGHT) = tiny;
-        NSLog(@"Godmode activated");
+    float zero = 0.0f, huge = 1000.0f, tiny = 0.01f;
+    
+    uintptr_t addrs[] = {
+        g_configAddress + 0x70, // FrontalImpactKnockbackDuration
+        g_configAddress + 0x74, // FrontalImpactKnockbackDistance
+        g_configAddress + 0x68, // LowerImpactMaxHeight
+        g_configAddress + 0x6C, // UpperImpactMinHeight
+        g_configAddress + 0x78, // FrontalImpactTimeout
+        g_configAddress + 0x7C, // LowerImpactHeightRatio
+        g_configAddress + 0x80, // CornerImpactRegionDepthMin
+        g_configAddress + 0x84, // CornerImpactRegionDepthMax
+        g_configAddress + 0x88  // CornerImpactRegionWidth
+    };
+    float values[] = {zero, zero, huge, -huge, zero, zero, zero, zero, zero};
+    
+    for (int i = 0; i < 9; i++) {
+        vm_protect(task, (vm_address_t)addrs[i], sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+        *(float *)addrs[i] = values[i];
     }
+    
+    vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_COLLIDER_HEIGHT), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
+    *(float *)(g_configAddress + OFFSET_COLLIDER_HEIGHT) = tiny;
     
     // Jump Height
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_JUMP_HEIGHT), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_JUMP_HEIGHT) = g_settings.jumpHeight;
+    *(float *)(g_configAddress + OFFSET_JUMP_HEIGHT) = 50.0f;
     
     // Speed
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_INITIAL_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_FINAL_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_INITIAL_TARGET_SPEED) = g_settings.speed;
-    *(float *)(g_configAddress + OFFSET_FINAL_TARGET_SPEED) = g_settings.speed;
+    *(float *)(g_configAddress + OFFSET_INITIAL_TARGET_SPEED) = 200.0f;
+    *(float *)(g_configAddress + OFFSET_FINAL_TARGET_SPEED) = 200.0f;
     
     // Gravity
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_GRAVITY), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_GRAVITY) = g_settings.gravity;
+    *(float *)(g_configAddress + OFFSET_GRAVITY) = -50.0f;
     
     // Roll Duration
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_ROLL_DURATION), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_ROLL_DURATION) = g_settings.rollDuration;
+    *(float *)(g_configAddress + OFFSET_ROLL_DURATION) = 0.1f;
     
     // Stick to Ground
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_STICK_TO_GROUND), sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)(g_configAddress + OFFSET_STICK_TO_GROUND) = g_settings.stickToGround;
+    *(bool *)(g_configAddress + OFFSET_STICK_TO_GROUND) = true;
     
     // Wall Climb
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_WALL_CLIMB_ENABLED), sizeof(bool), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(bool *)(g_configAddress + OFFSET_WALL_CLIMB_ENABLED) = g_settings.wallClimbEnabled;
+    *(bool *)(g_configAddress + OFFSET_WALL_CLIMB_ENABLED) = true;
     
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED) = g_settings.wallClimbSpeed;
+    *(float *)(g_configAddress + OFFSET_WALL_CLIMB_TARGET_SPEED) = 50.0f;
     
     // Surface Max Upwards Speed
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED) = g_settings.surfaceMaxUpwardsSpeed;
+    *(float *)(g_configAddress + OFFSET_SURFACE_MAX_UPWARDS_SPEED) = 200.0f;
     
     // Speed Boost
     vm_protect(task, (vm_address_t)(g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED), sizeof(float), 0, VM_PROT_READ | VM_PROT_WRITE);
-    *(float *)(g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED) = g_settings.speedBoostMax;
+    *(float *)(g_configAddress + OFFSET_SPEED_BOOST_MAX_SPEED) = 300.0f;
     
     NSLog(@"All settings applied!");
 }
 
-// ===== 5. دوال UI =====
-static UIWindow *menuWindow;
-static BOOL isMenuVisible = NO;
-
+// ============================================================
+// ===== دوال UI (بدون self) =====
+// ============================================================
 void toggleMenu() {
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    if (!window) return;
+    
     if (!menuWindow) {
-        menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 60, 300, 400)];
+        menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, 280, 300)];
         menuWindow.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.95];
         menuWindow.layer.cornerRadius = 16;
-        menuWindow.hidden = YES;
+        menuWindow.layer.borderColor = [UIColor grayColor].CGColor;
+        menuWindow.layer.borderWidth = 0.5;
         menuWindow.windowLevel = UIWindowLevelAlert + 1;
+        menuWindow.userInteractionEnabled = YES;
         
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 280, 30)];
+        // عنوان
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 260, 30)];
         title.text = @"Frezon Mod v0.1";
         title.textColor = [UIColor whiteColor];
         title.textAlignment = NSTextAlignmentCenter;
         title.font = [UIFont boldSystemFontOfSize:18];
         [menuWindow addSubview:title];
         
+        // زر إغلاق
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(260, 10, 30, 30);
+        closeBtn.frame = CGRectMake(240, 10, 30, 30);
         [closeBtn setTitle:@"X" forState:UIControlStateNormal];
         [closeBtn setTitleColor:[UIColor grayColor] forState:UIControlStateNormal];
-        [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
+        [closeBtn addTarget:menuWindow action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
         [menuWindow addSubview:closeBtn];
         
+        // زر Godmode
         UIButton *godmodeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        godmodeBtn.frame = CGRectMake(20, 60, 260, 40);
+        godmodeBtn.frame = CGRectMake(20, 60, 240, 40);
         godmodeBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         godmodeBtn.layer.cornerRadius = 8;
         [godmodeBtn setTitle:@"Godmode" forState:UIControlStateNormal];
         [godmodeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [godmodeBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [godmodeBtn addTarget:menuWindow action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
         [menuWindow addSubview:godmodeBtn];
         
+        // زر Jump
         UIButton *jumpBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        jumpBtn.frame = CGRectMake(20, 110, 260, 40);
+        jumpBtn.frame = CGRectMake(20, 110, 240, 40);
         jumpBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         jumpBtn.layer.cornerRadius = 8;
         [jumpBtn setTitle:@"Jump Height = 50" forState:UIControlStateNormal];
         [jumpBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [jumpBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [jumpBtn addTarget:menuWindow action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
         [menuWindow addSubview:jumpBtn];
         
+        // زر Speed
         UIButton *speedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        speedBtn.frame = CGRectMake(20, 160, 260, 40);
+        speedBtn.frame = CGRectMake(20, 160, 240, 40);
         speedBtn.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         speedBtn.layer.cornerRadius = 8;
         [speedBtn setTitle:@"Speed = 200" forState:UIControlStateNormal];
         [speedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [speedBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [speedBtn addTarget:menuWindow action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
         [menuWindow addSubview:speedBtn];
         
+        // زر Apply All
         UIButton *applyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        applyBtn.frame = CGRectMake(20, 320, 260, 44);
+        applyBtn.frame = CGRectMake(20, 220, 240, 44);
         applyBtn.backgroundColor = [UIColor colorWithWhite:0.3 alpha:1];
         applyBtn.layer.cornerRadius = 10;
         [applyBtn setTitle:@"Apply All" forState:UIControlStateNormal];
         [applyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [applyBtn addTarget:self action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
+        [applyBtn addTarget:menuWindow action:@selector(applyMods) forControlEvents:UIControlEventTouchUpInside];
         [menuWindow addSubview:applyBtn];
+        
+        [menuWindow makeKeyAndVisible];
     }
     
     isMenuVisible = !isMenuVisible;
@@ -244,15 +216,16 @@ void applyMods() {
     apply_modifications();
 }
 
-// ===== 6. نقطة الدخول =====
+// ============================================================
+// ===== نقطة الدخول =====
+// ============================================================
 __attribute__((constructor))
 static void frezonmod_entry() {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *window = [UIApplication sharedApplication].keyWindow;
         if (!window) return;
         
-        loadUnityFramework();
-        
+        // زر المنيو
         UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         menuBtn.frame = CGRectMake(20, 100, 60, 60);
         menuBtn.layer.cornerRadius = 30;
@@ -262,9 +235,10 @@ static void frezonmod_entry() {
         [menuBtn setTitle:@"F" forState:UIControlStateNormal];
         [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         menuBtn.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-        [menuBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+        [menuBtn addTarget:window action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
         [window addSubview:menuBtn];
         
+        // البحث عن العناوين بعد 3 ثواني
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             find_motor_config_address();
             apply_modifications();
