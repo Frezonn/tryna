@@ -2,6 +2,10 @@
 #import <Foundation/Foundation.h>
 #import <QuartzCore/QuartzCore.h>
 
+// Forward declaration so the constructor can call the class method before the
+// full @interface/@implementation is parsed.
+@class FrezonMod;
+
 static UIWindow *overlayWindow = nil;
 static UIView *menuContainer = nil;
 
