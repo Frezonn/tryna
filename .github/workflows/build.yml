@@ -1,0 +1,21 @@
+name: Build Frezon Dylib
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode.app
+      - name: Build for iOS arm64
+        run: |
+          xcodebuild -project FrezonMod.xcodeproj -scheme FrezonMod -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: FrezonMod.dylib
+          path: build/Release-iphoneos/*.dylib
