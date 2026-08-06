@@ -1,14 +1,28 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <QuartzCore/QuartzCore.h>
 
 static UIWindow *overlayWindow = nil;
 static UIView *menuContainer = nil;
 
 __attribute__((constructor)) static void initFrezon() {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self buildFrezonInterface];
+        // Call the class method on FrezonMod (can't use `self` here)
+        [FrezonMod buildFrezonInterface];
     });
 }
+
+@interface FrezonMod : NSObject
+
++ (void)buildFrezonInterface;
++ (void)executeSeedReplacement;
++ (void)showFeedback:(NSString *)msg;
++ (void)dragContainer:(UIPanGestureRecognizer *)gesture;
++ (void)closeOverlay;
+
+@end
+
+@implementation FrezonMod
 
 + (void)buildFrezonInterface {
     // النافذة العائمة
@@ -17,6 +31,13 @@ __attribute__((constructor)) static void initFrezon() {
     overlayWindow.backgroundColor = [UIColor clearColor];
     overlayWindow.userInteractionEnabled = YES;
     overlayWindow.hidden = NO;
+
+    // Ensure a rootViewController so touches/rotation work properly
+    if (!overlayWindow.rootViewController) {
+        UIViewController *vc = [UIViewController new];
+        vc.view.backgroundColor = [UIColor clearColor];
+        overlayWindow.rootViewController = vc;
+    }
 
     // الحاوية الرئيسية للمود (وسط الشاشة)
     CGFloat width = 300, height = 220;
@@ -47,7 +68,7 @@ __attribute__((constructor)) static void initFrezon() {
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     NSString *hackFolder = [bundlePath stringByAppendingPathComponent:@"hack"];
     NSString *iconPath = [hackFolder stringByAppendingPathComponent:@"icon.png"];
-    
+
     // إذا لم تكن الصورة موجودة، استخدم نصاً احتياطياً
     UIImage *iconImage = [UIImage imageWithContentsOfFile:iconPath];
     if (!iconImage) {
@@ -98,7 +119,7 @@ __attribute__((constructor)) static void initFrezon() {
 + (void)executeSeedReplacement {
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     NSString *seedFolder = [[bundlePath stringByAppendingPathComponent:@"hack"] stringByAppendingPathComponent:@"seed"];
-    
+
     // التأكد من وجود مجلد seed
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:seedFolder isDirectory:&isDir] || !isDir) {
@@ -108,11 +129,11 @@ __attribute__((constructor)) static void initFrezon() {
 
     // مسار Documents حيث تتوقع اللعبة ملفاتها
     NSString *docPath = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    
+
     // قائمة الملفات المستهدفة
     NSArray *targetFiles = @[@"wallet.json", @"user_stats.json", @"characters_inventory.json", 
                              @"boards_inventory.json", @"upgrades.json"];
-    
+
     BOOL anySuccess = NO;
     NSError *error = nil;
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -120,7 +141,7 @@ __attribute__((constructor)) static void initFrezon() {
     for (NSString *fileName in targetFiles) {
         NSString *sourcePath = [seedFolder stringByAppendingPathComponent:fileName];
         NSString *destPath = [docPath stringByAppendingPathComponent:fileName];
-        
+
         // هل الملف المصدر موجود؟
         if ([fm fileExistsAtPath:sourcePath]) {
             // حذف الملف الهدف القديم (إن وجد) ثم نسخ الجديد
@@ -147,7 +168,7 @@ __attribute__((constructor)) static void initFrezon() {
 + (void)showFeedback:(NSString *)msg {
     UILabel *fb = (UILabel *)[menuContainer viewWithTag:999];
     if (fb) [fb removeFromSuperview];
-    
+
     fb = [[UILabel alloc] initWithFrame:CGRectMake(10, 150, menuContainer.bounds.size.width - 20, 40)];
     fb.text = msg;
     fb.textColor = [UIColor yellowColor];
@@ -156,7 +177,7 @@ __attribute__((constructor)) static void initFrezon() {
     fb.numberOfLines = 2;
     fb.tag = 999;
     [menuContainer addSubview:fb];
-    
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [fb removeFromSuperview];
     });
@@ -172,3 +193,5 @@ __attribute__((constructor)) static void initFrezon() {
 + (void)closeOverlay {
     overlayWindow.hidden = YES;
 }
+
+@end
