@@ -1,57 +1,60 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
+@interface FrezonMod : NSObject
++ (void)safeBuildInterface;
++ (NSString *)findHackFolder;
++ (void)buildFrezonInterfaceWithHackPath:(NSString *)hackPath;
++ (void)showErrorAlert:(NSString *)message;
++ (void)executeSeedReplacement;
++ (void)dragContainer:(UIPanGestureRecognizer *)gesture;
++ (void)closeOverlay;
++ (void)showFeedback:(NSString *)msg;
+@end
+
+@implementation FrezonMod
+
 static UIWindow *overlayWindow = nil;
 static UIView *menuContainer = nil;
 static BOOL isHackFolderReady = NO;
 
 // دالة التهيئة (تُستدعى فور تحميل المكتبة)
 __attribute__((constructor)) static void initFrezon() {
-    // تشغيل Thread منفصل للتأخير دون تعطيل الخيط الرئيسي
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // انتظار 10 ثواني كاملة
         [NSThread sleepForTimeInterval:10.0];
-        
-        // العودة إلى الخيط الرئيسي لبناء واجهة المستخدم
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self safeBuildInterface];
+            [FrezonMod safeBuildInterface];
         });
     });
 }
 
-// دالة آمنة تتحقق من وجود المجلد قبل بناء الواجهة
+// دوال الفئة
 + (void)safeBuildInterface {
     NSString *hackPath = [self findHackFolder];
     if (!hackPath) {
-        NSLog(@"[Frezon] مجلد hack غير موجود بعد 10 ثواني، تأكد من وجوده داخل الحزمة");
+        NSLog(@"[Frezon] مجلد hack غير موجود بعد 10 ثواني");
         [self showErrorAlert:@"مجلد hack غير موجود، المود لن يعمل"];
         return;
     }
     
-    // التحقق من وجود الأيقونة وملفات seed
     NSString *iconPath = [hackPath stringByAppendingPathComponent:@"icon.png"];
     NSString *seedPath = [hackPath stringByAppendingPathComponent:@"seed"];
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:iconPath] ||
         ![[NSFileManager defaultManager] fileExistsAtPath:seedPath isDirectory:&isDir] || !isDir) {
-        NSLog(@"[Frezon] الملفات ناقصة: icon.png أو مجلد seed غير موجود");
-        [self showErrorAlert:@"ملفات المود ناقصة، تأكد من وجود icon.png ومجلد seed"];
+        NSLog(@"[Frezon] الملفات ناقصة");
+        [self showErrorAlert:@"ملفات المود ناقصة"];
         return;
     }
     
-    // كل شيء جاهز، نبني الواجهة
     isHackFolderReady = YES;
     [self buildFrezonInterfaceWithHackPath:hackPath];
 }
 
-// دالة البحث عن مجلد hack في عدة مسارات
 + (NSString *)findHackFolder {
     NSArray *possiblePaths = @[
-        // المسار الأساسي داخل حزمة التطبيق
         [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:@"hack"],
-        // مسار احتياطي داخل Documents الخاص باللعبة
         [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject] stringByAppendingPathComponent:@"hack"],
-        // مسار عام على الجهاز (يتطلب صلاحيات)
         @"/var/mobile/hack"
     ];
     
@@ -64,16 +67,13 @@ __attribute__((constructor)) static void initFrezon() {
     return nil;
 }
 
-// دالة بناء الواجهة
 + (void)buildFrezonInterfaceWithHackPath:(NSString *)hackPath {
-    // إنشاء النافذة العائمة
     overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     overlayWindow.windowLevel = UIWindowLevelAlert + 1;
     overlayWindow.backgroundColor = [UIColor clearColor];
     overlayWindow.userInteractionEnabled = YES;
     overlayWindow.hidden = NO;
 
-    // حاوية المود
     CGFloat width = 300, height = 220;
     CGFloat x = (overlayWindow.bounds.size.width - width) / 2;
     CGFloat y = (overlayWindow.bounds.size.height - height) / 2 - 60;
@@ -84,7 +84,6 @@ __attribute__((constructor)) static void initFrezon() {
     menuContainer.layer.borderWidth = 2.5;
     menuContainer.clipsToBounds = YES;
 
-    // العنوان الثابت
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, width, 40)];
     titleLabel.text = @"Frezon mod v0.1";
     titleLabel.textColor = [UIColor colorWithRed:0.0 green:1.0 blue:0.0 alpha:1.0];
@@ -93,12 +92,10 @@ __attribute__((constructor)) static void initFrezon() {
     titleLabel.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.4];
     [menuContainer addSubview:titleLabel];
 
-    // خط فاصل
     UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(10, 54, width - 20, 1.5)];
     sep.backgroundColor = [UIColor darkGrayColor];
     [menuContainer addSubview:sep];
 
-    // استدعاء الأيقونة من مسار hack
     NSString *iconPath = [hackPath stringByAppendingPathComponent:@"icon.png"];
     UIImage *iconImage = [UIImage imageWithContentsOfFile:iconPath];
     if (!iconImage) {
@@ -106,7 +103,6 @@ __attribute__((constructor)) static void initFrezon() {
         iconImage = [UIImage imageWithContentsOfFile:iconPath];
     }
     if (!iconImage) {
-        // صورة افتراضية احتياطية
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(60, 60), NO, 0);
         [[UIColor greenColor] setFill];
         UIRectFill(CGRectMake(0, 0, 60, 60));
@@ -114,7 +110,6 @@ __attribute__((constructor)) static void initFrezon() {
         UIGraphicsEndImageContext();
     }
 
-    // زر التشغيل
     UIButton *actionBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     actionBtn.frame = CGRectMake((width - 180) / 2, 70, 180, 60);
     [actionBtn setImage:iconImage forState:UIControlStateNormal];
@@ -128,7 +123,6 @@ __attribute__((constructor)) static void initFrezon() {
     [actionBtn addTarget:self action:@selector(executeSeedReplacement) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:actionBtn];
 
-    // زر إغلاق
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(width - 45, 8, 35, 35);
     [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
@@ -137,16 +131,13 @@ __attribute__((constructor)) static void initFrezon() {
     [closeBtn addTarget:self action:@selector(closeOverlay) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:closeBtn];
 
-    // إضافة سحب للحاوية
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragContainer:)];
     [menuContainer addGestureRecognizer:pan];
 
     [overlayWindow addSubview:menuContainer];
-    
-    NSLog(@"[Frezon] تم بناء الواجهة بنجاح بعد 10 ثواني");
+    NSLog(@"[Frezon] تم بناء الواجهة بنجاح");
 }
 
-// دالة عرض خطأ بدلاً من الكراش
 + (void)showErrorAlert:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Frezon Mod Error"
@@ -156,16 +147,13 @@ __attribute__((constructor)) static void initFrezon() {
         UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
         if (rootVC) {
             [rootVC presentViewController:alert animated:YES completion:nil];
-        } else {
-            NSLog(@"[Frezon] لا يوجد Root View Controller لعرض التنبيه");
         }
     });
 }
 
-// دالة استبدال الملفات
 + (void)executeSeedReplacement {
     if (!isHackFolderReady) {
-        [self showFeedback:@"المود غير جاهز، تأكد من وجود مجلد hack"];
+        [self showFeedback:@"المود غير جاهز"];
         return;
     }
     
@@ -178,7 +166,7 @@ __attribute__((constructor)) static void initFrezon() {
     NSString *seedPath = [hackPath stringByAppendingPathComponent:@"seed"];
     BOOL isDir = NO;
     if (![[NSFileManager defaultManager] fileExistsAtPath:seedPath isDirectory:&isDir] || !isDir) {
-        [self showFeedback:@"مجلد seed غير موجود داخل hack"];
+        [self showFeedback:@"مجلد seed غير موجود"];
         return;
     }
 
@@ -200,9 +188,7 @@ __attribute__((constructor)) static void initFrezon() {
             }
             if ([fm copyItemAtPath:sourcePath toPath:destPath error:&error]) {
                 anySuccess = YES;
-                NSLog(@"[Frezon] تم نسخ %@ بنجاح", fileName);
-            } else {
-                NSLog(@"[Frezon] فشل نسخ %@: %@", fileName, error.localizedDescription);
+                NSLog(@"[Frezon] تم نسخ %@", fileName);
             }
         }
     }
@@ -214,7 +200,6 @@ __attribute__((constructor)) static void initFrezon() {
     }
 }
 
-// دوال مساعدة
 + (void)dragContainer:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:overlayWindow];
     gesture.view.center = CGPointMake(gesture.view.center.x + translation.x, gesture.view.center.y + translation.y);
@@ -244,3 +229,5 @@ __attribute__((constructor)) static void initFrezon() {
         });
     });
 }
+
+@end
