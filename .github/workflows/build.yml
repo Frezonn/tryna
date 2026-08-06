@@ -15,7 +15,7 @@ jobs:
         run: |
           xcodebuild -project FrezonMod.xcodeproj -scheme FrezonMod -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: FrezonMod.dylib
           path: build/Release-iphoneos/*.dylib
