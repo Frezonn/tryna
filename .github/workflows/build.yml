@@ -1,4 +1,4 @@
-name: Build Frezon Mod
+name: Build  Mod
 
 on:
   push:
